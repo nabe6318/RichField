@@ -3,12 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>牧草地 面積マップ</title>
+<title>牧草地 面積計測</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
 <style>
@@ -18,64 +17,45 @@
   header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #3d5a2a; color: #fff; flex-wrap: wrap; }
   header h1 { font-size: 17px; margin: 0; font-weight: 600; }
   header .tools { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
-  header input { padding: 5px 8px; border-radius: 6px; border: 0; font-size: 14px; width: 80px; }
   header button { padding: 5px 10px; border-radius: 6px; border: 0; background: #fff; color: #3d5a2a; font-size: 14px; cursor: pointer; }
+  #status { font-size: 12px; opacity: .85; }
   #main { flex: 1; display: flex; min-height: 0; }
   #map { flex: 1; }
-  #panel { width: 340px; overflow-y: auto; border-left: 1px solid #ddd; padding: 12px 14px; background: #fafafa; font-size: 14px; }
+  #panel { width: 360px; overflow-y: auto; border-left: 1px solid #ddd; padding: 12px 14px; background: #fafafa; font-size: 14px; }
   #panel h2 { font-size: 15px; margin: 0 0 8px; }
-  #panel table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-  #panel th, #panel td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #e5e5e5; vertical-align: top; }
-  #panel th { width: 38%; color: #555; font-weight: 500; white-space: nowrap; }
-  #panel td { white-space: pre-wrap; word-break: break-all; }
-  #panel td.num { font-variant-numeric: tabular-nums; }
-  .muted { color: #888; }
-  .small { font-size: 12px; }
+  .muted { color: #888; } .small { font-size: 12px; }
   a.act { color: #3d5a2a; cursor: pointer; text-decoration: underline; }
-  .legend { background: #fff; padding: 8px 10px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 13px; line-height: 1.75; }
-  .legend i { display: inline-block; width: 14px; height: 14px; margin: 0 6px 0 2px; vertical-align: -2px; border: 1px solid #555; }
-  .lbl { background: none; border: 0; box-shadow: none; font-size: 11px; font-weight: 700; color: #222; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; text-align: center; white-space: nowrap; }
-  #status { font-size: 12px; opacity: .85; }
+  .box { background: #fff; border: 1px solid #e3e3e3; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+  .box h3 { font-size: 13px; margin: 0 0 6px; color: #3d5a2a; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btns button { flex: 1; min-width: 130px; padding: 7px; font-size: 13px; border: 1px solid #3d5a2a; border-radius: 6px; background: #fff; color: #3d5a2a; cursor: pointer; }
+  .btns button.main { background: #3d5a2a; color: #fff; }
+  .mcard { background: #fff; border: 1px solid #e3e3e3; border-left: 4px solid #00b8d4; border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
+  .mcard.pending { border-left-color: #ff9800; } .mcard.local { border-left-color: #9e9e9e; }
+  .mcard .mt { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
+  .mcard .num { font-size: 13px; font-variant-numeric: tabular-nums; margin: 2px 0; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 500; padding: 0 6px; border-radius: 8px; margin-left: 4px; vertical-align: 1px; }
+  .badge.synced { background: #e0f7fa; color: #00727f; } .badge.pending { background: #fff3e0; color: #b25b00; } .badge.local { background: #eee; color: #555; }
   .area-pop table { border-collapse: collapse; font-size: 13px; }
   .area-pop th { text-align: left; font-weight: 500; color: #555; padding: 2px 10px 2px 0; white-space: nowrap; }
   .area-pop td { text-align: right; padding: 2px 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .area-pop .big { font-size: 15px; font-weight: 700; }
   .area-pop .warn { color: #c62828; font-size: 12px; margin-top: 4px; }
-  form.entry { background: #fff; border: 1px solid #cfdccf; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
-  form.entry h3 { font-size: 14px; margin: 0 0 8px; color: #3d5a2a; }
-  form.entry label { display: block; font-size: 12px; color: #555; margin: 8px 0 3px; }
-  form.entry input, form.entry textarea { width: 100%; padding: 6px 8px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; font-family: inherit; background: #fff; }
-  form.entry textarea { min-height: 60px; resize: vertical; }
-  form.entry button { margin-top: 10px; width: 100%; padding: 9px; font-size: 15px; border: 0; border-radius: 6px; background: #3d5a2a; color: #fff; cursor: pointer; }
-  form.entry button:disabled { background: #999; }
-  .msg { font-size: 13px; margin-top: 6px; } .msg.ok { color: #2e7d32; } .msg.ng { color: #c62828; }
-  .shape { background: #fff; border: 1px solid #cfd8e3; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
-  .shape h3 { font-size: 14px; margin: 0 0 6px; color: #2b4f7a; }
-  .shape .btns { display: flex; gap: 6px; margin-top: 8px; }
-  .shape button { flex: 1; padding: 8px; font-size: 14px; border: 0; border-radius: 6px; background: #2b4f7a; color: #fff; cursor: pointer; }
-  .shape button.sub { background: #e0e0e0; color: #333; }
-  .shape button:disabled { background: #999; }
-  .shape .live { font-variant-numeric: tabular-nums; margin-top: 6px; }
-  .shape ul { margin: 4px 0 0 16px; padding: 0; font-size: 12px; color: #555; }
-  .howto { background: #fff; border: 1px solid #e3e3e3; border-radius: 8px; padding: 8px 10px; }
-  .howto ol { margin: 4px 0 0 18px; padding: 0; } .howto li { margin: 3px 0; }
+  .msg { font-size: 12px; margin-top: 6px; } .msg.ok { color: #2e7d32; } .msg.ng { color: #c62828; }
   @media (max-width: 760px) {
     #main { flex-direction: column; }
-    #panel { width: 100%; height: 38%; border-left: 0; border-top: 1px solid #ddd; }
+    #panel { width: 100%; height: 42%; border-left: 0; border-top: 1px solid #ddd; }
   }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>牧草地 面積マップ(1m DEM)</h1>
+    <h1>牧草地 面積計測(1m DEM)</h1>
     <span id="status"></span>
     <div class="tools">
-      <input id="q" placeholder="ID">
-      <button id="go">移動</button>
       <button id="locate" title="現在地">現在地</button>
-      <button id="export" title="囲った範囲をGeoJSONで保存">計測を保存</button>
-      <button id="reload">再読み込み</button>
+      <button id="reload" title="スプレッドシートから読み直す">再読み込み</button>
     </div>
   </header>
   <div id="main">
@@ -87,32 +67,19 @@
 <script>
 // ===================== 設定(ここだけ編集すればOK) =====================
 const CONFIG = {
-  fields: 'data/fields.geojson',        // 筆ポリゴン(tools/calc_area.py で作成。属性は field_id のみ)
-  sheetCsv: 'data/fields_sheet.csv',    // APIが未設定・読めないときに使う属性表(シートを書き出したもの)
-  // 属性表の読み書きAPI(Apps Scriptのウェブアプリ URL)。設定するとシートを直接読み、入力フォームが出ます
+  // 計測結果の書き込み先(Apps Scriptのウェブアプリ URL)。空なら、ブラウザとローカルファイルだけに保存します
   api: 'https://script.google.com/macros/s/AKfycbxopqKbenmoQ4s1TlTkdd6bNFk66wJRMkUbw-5bXyxn1OR4ln5-gy7kLyisGaWNR9cXbw/exec',
-  dem: 'data/dem.tif',                  // 範囲を囲ったときの計算に使うDEM(COG)
+  dem: 'data/dem.tif',                  // 面積計算に使うDEM(COG)
   demCrs: '+proj=tmerc +lat_0=44 +lon_0=142.25 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs', // JGD2011 平面直角座標 XII系 (EPSG:6680)
-  idField: 'field_id',
-  nameField: '圃場名',
-  editable: ['圃場名', '管理者', '草種', '備考'],   // 地図から書き換えられる列(gas/Code.gs の EDITABLE と合わせる)
-  editors: [],                          // 更新者の選択肢(空なら自由入力)
-  colorField: '平均傾斜_度',            // 色分けに使う列
-  classes: [                            // 上限未満 → 色
-    { max: 3,  color: '#4caf50', label: '3° 未満' },
-    { max: 5,  color: '#cddc39', label: '3〜5°' },
-    { max: 8,  color: '#ff9800', label: '5〜8°' },
-    { max: 1e9, color: '#e53935', label: '8° 以上' },
-  ],
-  showLabels: 15,                       // このズーム以上で圃場名を表示
   maxCells: 6e6,                        // 一度に計算するセル数の上限(約600ha)
+  fileName: '計測範囲.geojson',          // ローカルに保存するときの既定のファイル名
 };
 // ======================================================================
 
 proj4.defs('DEM', CONFIG.demCrs);
 const toXY = proj4('EPSG:4326', 'DEM');
 
-const map = L.map('map', { maxZoom: 21 });
+const map = L.map('map', { maxZoom: 21 }).setView([44.445, 143.17], 15);
 const gsi = '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル</a>';
 const bases = {
   '地理院 航空写真': L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', { attribution: gsi, maxNativeZoom: 18, maxZoom: 21 }),
@@ -126,6 +93,9 @@ L.control.scale({ imperial: false }).addTo(map);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const nf = (v, d = 0) => Number(v).toLocaleString('ja-JP', { minimumFractionDigits: d, maximumFractionDigits: d });
 const setStatus = t => document.getElementById('status').textContent = t;
+const store = { get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+                set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} } };
+const nowStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 19).replace('T', ' '); };
 
 // ===================== DEMから面積を計算 =====================
 // 投影面積 = ポリゴンの平面面積、表面積 = 投影面積 × 平均(1/cosθ)
@@ -207,7 +177,23 @@ function areaHtml(a, title) {
     </table>${a.coverage > 0 && a.coverage < 0.999 ? `<div class="warn">DEMが無い部分が ${nf((1 - a.coverage) * 100, 1)}% あります(その部分は平均傾斜で補っています)</div>` : ''}</div>`;
 }
 
-// ===================== 範囲を囲って計測 =====================
+// DEMの範囲を点線で表示し、最初はその範囲を表示する
+const demFrame = L.rectangle([[0, 0], [0, 0]], { color: '#ffeb3b', weight: 2, dashArray: '6 6', fill: false, interactive: false });
+dem().then(D => {
+  const inv = proj4('DEM', 'EPSG:4326');
+  const xs = [D.ox, D.ox + D.W * D.dx], ys = [D.oy - D.H * D.dy, D.oy];
+  const ll = xs.flatMap(x => ys.map(y => inv.forward([x, y]))).map(([lng, lat]) => [lat, lng]);
+  demFrame.setBounds(L.latLngBounds(ll)).addTo(map);
+  if (!drawn.getLayers().length) map.fitBounds(demFrame.getBounds());
+}).catch(e => setStatus('DEMを読み込めません:' + e.message));
+
+// ===================== 計測 =====================
+// 1件の計測 = 地図上のポリゴン1つ。状態(st)は
+//   synced  … スプレッドシートに保存済み
+//   pending … まだシートに送れていない(合言葉未入力・通信失敗など)
+//   local   … ローカルファイルから読み込んだだけで、シートには無い
+const drawn = new L.FeatureGroup().addTo(map);
+const shapeStyle = { color: '#00e5ff', weight: 3, fillColor: '#00e5ff', fillOpacity: 0.15 };
 L.drawLocal.draw.toolbar.buttons.polygon = '範囲を囲って面積を計算';
 L.drawLocal.draw.toolbar.buttons.rectangle = '四角で囲って面積を計算';
 L.drawLocal.draw.toolbar.actions.text = 'やめる';
@@ -218,9 +204,6 @@ L.drawLocal.draw.handlers.rectangle.tooltip.start = 'ドラッグして四角を
 L.drawLocal.draw.handlers.simpleshape.tooltip.end = '離すと確定します';
 L.drawLocal.edit.toolbar.buttons = { edit: '計測範囲を修正', editDisabled: '修正できる範囲がありません', remove: '計測範囲を削除', removeDisabled: '削除できる範囲がありません' };
 L.drawLocal.edit.toolbar.actions = { save: { title: '確定', text: '確定' }, cancel: { title: 'やめる', text: 'やめる' }, clearAll: { title: 'すべて削除', text: 'すべて削除' } };
-
-const drawn = new L.FeatureGroup().addTo(map);
-const shapeStyle = { color: '#00e5ff', weight: 3, fillColor: '#00e5ff', fillOpacity: 0.15 };
 map.addControl(new L.Control.Draw({
   position: 'topleft',
   draw: { polygon: { allowIntersection: false, showArea: false, shapeOptions: shapeStyle },
@@ -228,326 +211,306 @@ map.addControl(new L.Control.Draw({
           polyline: false, circle: false, marker: false, circlemarker: false },
   edit: { featureGroup: drawn },
 }));
-let shapeNo = 0;
-async function measure(layer) {
-  layer.bindPopup('計算中…', { minWidth: 210 }).openPopup();
-  try {
-    const a = await calcArea(layer.toGeoJSON(false).geometry);
-    layer.area = a;
-    layer.setPopupContent(areaHtml(a, `計測 ${layer.no}`));
-    layer.bindTooltip(`計測${layer.no}:${nf(a.surf || a.proj)} m²`, { permanent: false, sticky: true });
-  } catch (e) {
-    layer.setPopupContent(`<span style="color:#c00">計算できませんでした:${esc(e.message)}</span>`);
-  }
-  layer.openPopup();
+L.control.layers(bases, { '計測範囲': drawn, 'DEMの範囲': demFrame }).addTo(map);
+
+const byMid = new Map();   // 計測ID → layer
+const newId = () => 'M' + nowStr().replace(/\D/g, '').slice(2, 14) + '-' + Math.random().toString(36).slice(2, 5);
+const title = l => l.name || '(名前なし)';
+const round7 = c => typeof c[0] === 'number' ? [+c[0].toFixed(7), +c[1].toFixed(7)] : c.map(round7);
+const geomOf = l => { const g = l.toGeoJSON(false).geometry; g.coordinates = round7(g.coordinates); return g; };
+const BADGE = { synced: 'シート保存済', pending: '未送信', local: 'ローカルのみ' };
+
+function popupHtml(l) {
+  return (l.area ? areaHtml(l.area, title(l)) : `<b>${esc(title(l))}</b><div class="small">計算中…</div>`) +
+    (l.memo ? `<div class="small" style="margin-top:4px;white-space:pre-wrap">${esc(l.memo)}</div>` : '') +
+    `<div class="small muted" style="margin-top:4px">${esc(l.created || '')}${l.who ? ' ・ ' + esc(l.who) : ''}<span class="badge ${l.st}">${BADGE[l.st]}</span></div>
+     <div class="small" style="margin-top:4px"><a class="act" data-act="name">名前・メモ</a>${l.st !== 'synced' && CONFIG.api ? ' ・ <a class="act" data-act="send">シートに送る</a>' : ''}</div>`;
 }
-map.on(L.Draw.Event.CREATED, e => { e.layer.no = ++shapeNo; drawn.addLayer(e.layer); measure(e.layer); });
-map.on(L.Draw.Event.EDITED, e => e.layers.eachLayer(measure));
-
-document.getElementById('export').onclick = () => {
-  const feats = drawn.getLayers().map(l => {
-    const f = l.toGeoJSON(false), a = l.area || {};
-    f.properties = { no: l.no, 投影面積_m2: +(+a.proj || 0).toFixed(1), 表面積_m2: +(+a.surf || 0).toFixed(1),
-                     面積比: +(+a.ratio || 0).toFixed(4), 平均傾斜_度: +(+a.slope || 0).toFixed(2) };
-    return f;
-  });
-  if (!feats.length) { alert('まだ範囲を囲っていません'); return; }
-  const blob = new Blob([JSON.stringify({ type: 'FeatureCollection', features: feats })], { type: 'application/geo+json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `計測範囲_${new Date().toISOString().slice(0, 10)}.geojson`; a.click();
-};
-
-// ===================== 筆ポリゴンと属性表 =====================
-let fieldLayer = null, layerCtl = null, attrs = {}, byId = {}, selected = null, apiError = '';
-let origGeom = {}, labelById = {}, editingId = null;
-const labelLayer = L.layerGroup();
-const colorOf = id => {
-  const v = parseFloat(attrs[id]?.[CONFIG.colorField]);
-  return Number.isFinite(v) ? CONFIG.classes.find(c => v < c.max).color : null;
-};
-const styleOf = id => {
-  const c = colorOf(id), sel = id === selected, edited = !!attrs[id]?.geometry;
-  return { color: id === editingId ? '#ff4081' : sel ? '#00e5ff' : '#ffffff', weight: sel || id === editingId ? 4 : 1.5,
-           dashArray: edited ? '8 5' : null, fillColor: c || '#000', fillOpacity: c ? 0.45 : 0, opacity: 1 };
-};
-
-const bust = u => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
-const loadCsv = () => fetch(bust(CONFIG.sheetCsv)).then(r => r.ok ? r.text() : '')
-  .then(t => Papa.parse(t.replace(/^﻿/, ''), { header: true, skipEmptyLines: true }).data);
-async function loadApi() {
-  apiError = '';
-  const r = await fetch(bust(CONFIG.api)), text = await r.text();
-  let j;
-  try { j = JSON.parse(text); }
-  catch { throw new Error(/accounts\.google|ServiceLogin|<form/i.test(text)
-    ? 'Googleのログインを求められました(Apps Scriptの「アクセスできるユーザー」が「全員」になっていない可能性)'
-    : 'APIがJSON以外を返しました:' + text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120)); }
-  if (!j.ok) throw new Error('API: ' + j.error);
-  return j.rows;
+function addLayer(geom, p) {
+  const l = L.polygon(L.GeoJSON.coordsToLatLngs(geom.coordinates, geom.type === 'Polygon' ? 1 : 2), shapeStyle);
+  Object.assign(l, { mid: p.mid || newId(), name: p.name || '', memo: p.memo || '', created: p.created || nowStr(),
+                     who: p.who || '', area: p.area || null, st: p.st || 'pending' });
+  l.bindPopup(() => popupHtml(l), { minWidth: 220 });
+  l.bindTooltip(() => `${esc(title(l))}:${l.area ? nf(l.area.surf || l.area.proj) + ' m²' : ''}`, { sticky: true });
+  drawn.addLayer(l); byMid.set(l.mid, l);
+  return l;
 }
-const putRow = row => { const id = String(row[CONFIG.idField] ?? '').trim(); if (id) attrs[id] = Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v == null ? '' : String(v)])); };
+const removeLayer = l => { drawn.removeLayer(l); byMid.delete(l.mid); };
+const refreshPopup = l => { if (l.isPopupOpen()) l.setPopupContent(popupHtml(l)); };
 
-async function loadAll() {
-  setStatus('読み込み中…');
-  const [geo, rows] = await Promise.all([
-    fetch(bust(CONFIG.fields)).then(r => { if (!r.ok) throw new Error(CONFIG.fields); return r.json(); }),
-    CONFIG.api ? loadApi().catch(e => { apiError = e.message; return loadCsv(); }) : loadCsv(),
-  ]);
-  attrs = {}; rows.forEach(putRow);
-  // シートの geometry 列(地図で修正した形状)があれば、筆ポリゴンの形より優先する
-  origGeom = {};
-  geo.features.forEach(f => {
-    const id = String(f.properties[CONFIG.idField]);
-    origGeom[id] = f.geometry;
-    const g = attrs[id]?.geometry;
-    if (g) try { f.geometry = JSON.parse(g); } catch { console.warn('geometry を読めません', id); }
-  });
-  if (editingId) stopEdit(false);
-  draw(geo);
-  setStatus(`${Object.keys(byId).length} 筆` + (apiError ? '(保存済みCSVを表示中)' : ''));
-  if (apiError) document.getElementById('panel').innerHTML =
-    `<p style="color:#c00">スプレッドシートを読み込めませんでした。保存済みのCSVで表示しています(入力はできません)。</p><p class="muted">${esc(apiError)}</p>` + howto();
-  else if (!selected) document.getElementById('panel').innerHTML = howto();
+let popLayer = null;
+map.on('popupopen', e => popLayer = e.popup._source);
+document.getElementById('map').addEventListener('click', e => {
+  const a = e.target.closest('.leaflet-popup-content [data-act]');
+  if (!a || !popLayer || !drawn.hasLayer(popLayer)) return;
+  if (a.dataset.act === 'name') rename(popLayer);
+  if (a.dataset.act === 'send') send(popLayer);
+});
+
+async function recalc(l) {
+  try { l.area = await calcArea(geomOf(l)); }
+  catch (e) { l.area = null; setStatus('計算できませんでした:' + e.message); }
 }
 
-// 区画のラベルは圃場名のみ(未入力の区画には表示しない)
-const labelIcon = id => L.divIcon({ className: 'lbl', html: esc(attrs[id]?.[CONFIG.nameField] || ''), iconSize: [100, 14] });
+// 新しく囲ったとき:面積を計算 → 名前を聞く → シートとローカルに保存
+map.on(L.Draw.Event.CREATED, async e => {
+  const l = addLayer(e.layer.toGeoJSON(false).geometry, { who: store.get('editor') });
+  l.openPopup();
+  await recalc(l); refreshPopup(l);
+  const name = prompt('この計測の名前(例:北側の採草地)。あとで変更できます', '');
+  if (name) l.name = name.trim();
+  refreshPopup(l);
+  await send(l, true);
+});
+map.on(L.Draw.Event.EDITED, async e => {
+  for (const l of e.layers.getLayers()) { await recalc(l); l.st = l.st === 'local' ? 'local' : 'pending'; refreshPopup(l); await send(l, true); }
+});
+map.on(L.Draw.Event.DELETED, async e => {
+  for (const l of e.layers.getLayers()) { byMid.delete(l.mid); if (l.st === 'synced') await removeRemote(l.mid); }
+  changed();
+});
 
-function draw(geo) {
-  const first = !fieldLayer;
-  if (fieldLayer) { map.removeLayer(fieldLayer); layerCtl.remove(); }
-  labelLayer.clearLayers(); byId = {}; labelById = {};
-  fieldLayer = L.geoJSON(geo, {
-    style: f => styleOf(String(f.properties[CONFIG.idField])),
-    onEachFeature: (f, layer) => {
-      const id = String(f.properties[CONFIG.idField]);
-      byId[id] = layer;
-      layer.bindTooltip(() => { const a = attrs[id] || {};
-        return `ID ${esc(id)}${a[CONFIG.nameField] ? ' ' + esc(a[CONFIG.nameField]) : ''}<br>` +
-          (a['表面積_m2'] ? `表面積 ${nf(a['表面積_m2'])} m²(${nf(a['表面積_m2'] / 1e4, 2)} ha)` : ''); }, { sticky: true });
-      layer.on('click', e => { if (!drawing && (!editingId || editingId === id)) select(id); });
-      labelLayer.addLayer(labelById[id] = L.marker(layer.getBounds().getCenter(), { icon: labelIcon(id), interactive: false }));
-    },
-  }).addTo(map);
-  fieldLayer.bringToBack();
-  layerCtl = L.control.layers(bases, { '筆ポリゴン': fieldLayer, '圃場名': labelLayer, '計測範囲': drawn }).addTo(map);
-  updateLabels();
-  if (first) map.fitBounds(fieldLayer.getBounds(), { padding: [10, 10] });
-  if (selected && byId[selected]) select(selected, false);
+function rename(l) {
+  const name = prompt('名前', l.name); if (name === null) return;
+  const memo = prompt('メモ(空欄でも可)', l.memo); if (memo === null) return;
+  l.name = name.trim(); l.memo = memo.trim();
+  if (l.st === 'synced') l.st = 'pending';
+  refreshPopup(l); send(l, true);
 }
 
-// 計測中は筆のクリックで右パネルが切り替わらないように
-let drawing = false;
-map.on(L.Draw.Event.DRAWSTART, () => drawing = true);
-map.on(L.Draw.Event.DRAWSTOP, () => setTimeout(() => drawing = false, 50));
-
-const legend = L.control({ position: 'bottomright' });
-legend.onAdd = () => {
-  const d = L.DomUtil.create('div', 'legend');
-  d.innerHTML = `<b>平均傾斜</b><br>` + CONFIG.classes.map(c => `<i style="background:${c.color}"></i>${c.label}`).join('<br>') +
-    `<br><i style="background:transparent;border:2px dashed #555"></i>形状を修正した区画`;
-  return d;
-};
-legend.addTo(map);
-
-const howto = () => `<div class="howto"><b>使い方</b><ol>
-  <li>筆ポリゴンをクリック → 面積と属性(シートの内容)を表示</li>
-  <li>左上の <b>五角形</b>(または四角)ボタン → 地図をクリックして範囲を囲む → 囲った範囲の<b>投影面積・表面積</b>がポップアップで出ます</li>
-  <li>囲った範囲は鉛筆ボタンで修正、ゴミ箱で削除できます。「計測を保存」でGeoJSONに書き出せます</li>
-  <li>実際の区画と形が違う筆は、筆を選んで「形状を編集」→ 頂点を動かして保存すると、面積も計算し直してシートに記録されます</li></ol>
-  <p class="small muted">表面積は1m DEMの傾斜から求めた値です(投影面積 × 平均 1/cosθ)。</p></div>`;
-
-function select(id, zoom) {
-  const prev = selected; selected = id;
-  if (prev && byId[prev]) byId[prev].setStyle(styleOf(prev));
-  const layer = byId[id], panel = document.getElementById('panel');
-  if (!layer) { panel.innerHTML = `<p>ID ${esc(id)} は見つかりません。</p>` + howto(); return; }
-  layer.setStyle(styleOf(id)); layer.bringToFront();
-  drawn.eachLayer(l => l.bringToFront());   // 計測範囲は常に上に
-  if (zoom) map.fitBounds(layer.getBounds(), { maxZoom: 18 });
-  const a = attrs[id] || {};
-  const area = (k) => a[k] !== undefined && a[k] !== '' ? `${nf(a[k])} m²<br><span class="muted">${nf(a[k] / 100, 1)} a / ${nf(a[k] / 1e4, 3)} ha</span>` : '';
-  const shown = new Set([CONFIG.idField, ...CONFIG.editable, '投影面積_m2', '表面積_m2', '面積比', '平均傾斜_度', 'geometry']);
-  const others = Object.keys(a).filter(k => !shown.has(k) && a[k] !== '');
-  panel.innerHTML = `
-    <h2>ID ${esc(id)} ${a[CONFIG.nameField] ? esc(a[CONFIG.nameField]) : ''}</h2>
-    <table>
-      <tr><th>表面積</th><td class="num"><b>${area('表面積_m2')}</b></td></tr>
-      <tr><th>投影面積</th><td class="num">${area('投影面積_m2')}</td></tr>
-      <tr><th>面積比</th><td class="num">${esc(a['面積比'])}</td></tr>
-      <tr><th>平均傾斜</th><td class="num">${a['平均傾斜_度'] ? esc(a['平均傾斜_度']) + '°' : ''}</td></tr>
-      ${CONFIG.editable.map(k => `<tr><th>${esc(k)}</th><td>${esc(a[k])}</td></tr>`).join('')}
-    </table>
-    <p class="small"><a class="act" id="recalc">この筆を地図上のDEMで再計算</a> <span id="recalcOut" class="muted"></span></p>
-    ${CONFIG.api && !apiError ? shapeHtml(id, a) : ''}
-    ${CONFIG.api && !apiError ? formHtml(id, a) : (CONFIG.api ? '' : '<p class="small muted">属性の入力は、書き込みAPIを設定すると使えます(README参照)。</p>')}
-    ${others.length ? `<h2>その他の属性</h2><table>${others.map(k => `<tr><th>${esc(k)}</th><td>${esc(a[k])}</td></tr>`).join('')}</table>` : ''}`;
-  panel.scrollTop = 0;
-  document.getElementById('recalc').onclick = async () => {
-    const out = document.getElementById('recalcOut'); out.textContent = '計算中…';
-    try { const r = await calcArea(layer.feature.geometry); out.innerHTML = `投影 ${nf(r.proj)} m² / 表面 ${nf(r.surf)} m²`; }
-    catch (e) { out.textContent = '計算できませんでした:' + e.message; }
-  };
-  if (CONFIG.api && !apiError) { bindForm(id); bindShape(id); }
+// 何か変わったら:ブラウザ内の控え・ローカルファイル・一覧を更新
+function toFC() {
+  return { type: 'FeatureCollection', features: [...byMid.values()].sort((a, b) => a.created.localeCompare(b.created)).map(l => {
+    const a = l.area || {};
+    return { type: 'Feature', geometry: geomOf(l), properties: {
+      計測ID: l.mid, 名前: l.name, メモ: l.memo, 作成日時: l.created, 更新者: l.who, 状態: l.st,
+      投影面積_m2: +(+a.proj || 0).toFixed(1), 表面積_m2: +(+a.surf || 0).toFixed(1),
+      面積比: +(+a.ratio || 0).toFixed(4), 平均傾斜_度: +(+a.slope || 0).toFixed(2), DEM被覆率: +(+a.coverage || 0).toFixed(3) } };
+  }) };
+}
+function changed() {
+  store.set('rf2-cache', JSON.stringify(toFC()));
+  autoSaveFile();
+  render();
 }
 
-// ---------- 属性の入力フォーム ----------
-const store = { get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
-                set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} } };
-function formHtml(id, a) {
-  const last = store.get('editor');
-  const who = CONFIG.editors.length
-    ? `<select name="更新者" required><option value="">選択</option>${CONFIG.editors.map(k => `<option ${k === last ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select>`
-    : `<input name="更新者" value="${esc(last)}" required>`;
-  return `<form class="entry" id="entry"><h3>この筆の属性を編集</h3>
-    ${CONFIG.editable.map(k => `<label>${esc(k)}</label>` + (k === '備考'
-      ? `<textarea name="${esc(k)}">${esc(a[k])}</textarea>` : `<input name="${esc(k)}" value="${esc(a[k])}" autocomplete="off">`)).join('')}
-    <label>更新者 <span style="color:#c62828">*</span></label>${who}
-    <button type="submit">シートに保存</button><div class="msg" id="msg"></div></form>`;
-}
-// Apps Scriptへの保存(合言葉の確認つき)。成功したら更新後の行を返す
+// ===================== スプレッドシート =====================
+const api = (q = '') => CONFIG.api + (CONFIG.api.includes('?') ? '&' : '?') + q;
 async function postApi(body) {
   let pass = store.get('passcode');
   if (!pass) { pass = prompt('入力用の合言葉を入れてください(この端末に記憶されます)'); if (!pass) throw new Error('合言葉が入力されませんでした'); }
-  // Content-Typeを付けない(text/plain扱い)ことで、Apps Scriptへ直接POSTできる
-  const res = await fetch(CONFIG.api, { method: 'POST', body: JSON.stringify({ ...body, passcode: pass }) });
+  const res = await fetch(CONFIG.api, { method: 'POST', body: JSON.stringify({ ...body, target: 'measure', passcode: pass }) });
   const j = await res.json();
   if (!j.ok) {
-    if (j.error === 'passcode') { store.set('passcode', ''); throw new Error('合言葉が違います。もう一度保存してください。'); }
+    if (j.error === 'passcode') { store.set('passcode', ''); throw new Error('合言葉が違います'); }
     throw new Error(j.error);
   }
   store.set('passcode', pass);
-  if (body['更新者']) store.set('editor', body['更新者']);
-  putRow(j.row);
-  return j.row;
+  return j;
 }
-
-// ---------- 区画の形状の編集 ----------
-const round7 = c => typeof c[0] === 'number' ? [+c[0].toFixed(7), +c[1].toFixed(7)] : c.map(round7);
-const setGeom = (layer, g) => { layer.setLatLngs(L.GeoJSON.coordsToLatLngs(g.coordinates, g.type === 'Polygon' ? 1 : 2)); layer.feature.geometry = g; };
-let editBefore = null, liveTimer = null, liveArea = null;
-
-function shapeHtml(id, a) {
-  if (editingId === id) return `<div class="shape"><h3>形状を編集中</h3>
-    <ul><li>白い□をドラッグ:頂点を動かす</li><li>辺の中央の薄い□をドラッグ:頂点を足す</li><li>白い□をクリック:頂点を消す</li></ul>
-    <div class="live" id="live">計算中…</div>
-    <div class="btns"><button id="shapeSave">形状と面積を保存</button><button class="sub" id="shapeCancel">やめる</button></div>
-    <div class="msg" id="shapeMsg"></div></div>`;
-  return `<div class="shape"><h3>区画の形状</h3>
-    <div class="small">${a.geometry ? `地図で修正済み(${esc(a['形状更新日時'] || '')})` : '農水省の筆ポリゴンのまま'}</div>
-    <div class="btns"><button id="shapeEdit">形状を編集</button>${a.geometry ? '<button class="sub" id="shapeReset">元の筆ポリゴンに戻す</button>' : ''}</div>
-    <div class="msg" id="shapeMsg"></div></div>`;
-}
-
-function bindShape(id) {
-  const layer = byId[id], $ = k => document.getElementById(k);
-  const msg = (t, ok) => { const m = $('shapeMsg'); if (m) { m.className = 'msg ' + (ok ? 'ok' : 'ng'); m.textContent = t; } };
-  if (editingId === id) {
-    $('shapeCancel').onclick = () => { stopEdit(true); select(id, false); };
-    $('shapeSave').onclick = async () => {
-      const btn = $('shapeSave'); btn.disabled = true; btn.textContent = '保存中…';
-      try {
-        const g = layer.toGeoJSON(false).geometry; g.coordinates = round7(g.coordinates);
-        await saveShape(id, g);
-        stopEdit(false); select(id, false); msg('形状と面積を保存しました', true);
-      } catch (e) { btn.disabled = false; btn.textContent = '形状と面積を保存'; msg('保存できませんでした:' + e.message); }
-    };
-    updateLive(id);
-    return;
-  }
-  $('shapeEdit').onclick = () => startEdit(id);
-  if ($('shapeReset')) $('shapeReset').onclick = async () => {
-    if (!confirm('この区画を元の筆ポリゴンの形に戻し、面積も計算し直します。よろしいですか?')) return;
-    try { await saveShape(id, origGeom[id], true); select(id, false); msg('元の形に戻しました', true); }
-    catch (e) { msg('戻せませんでした:' + e.message); }
-  };
-}
-
-async function saveShape(id, g, reset) {
-  let who = store.get('editor');
-  if (!who) { who = prompt('更新者の名前を入れてください'); if (!who) throw new Error('更新者が入力されませんでした'); }
-  const a = await calcArea(g);
-  if (!Number.isFinite(a.surf)) throw new Error('DEMの範囲外のため面積を計算できません');
-  await postApi({ mode: 'shape', [CONFIG.idField]: id, geometry: reset ? '' : JSON.stringify(g), 更新者: who,
-    投影面積_m2: +a.proj.toFixed(1), 表面積_m2: +a.surf.toFixed(1), 面積比: +a.ratio.toFixed(4),
-    平均傾斜_度: +a.slope.toFixed(2), DEM被覆率: +a.coverage.toFixed(3) });
-  setGeom(byId[id], g);
-  byId[id].setStyle(styleOf(id));
-  labelById[id]?.setLatLng(byId[id].getBounds().getCenter());
-}
-
-function startEdit(id) {
-  if (editingId) stopEdit(true);
-  const layer = byId[id];
-  editingId = id; editBefore = JSON.parse(JSON.stringify(layer.feature.geometry));
-  layer.setStyle(styleOf(id)); layer.bringToFront();
-  layer.editing.enable();
-  layer.on('edit', onLiveEdit);
-  map.fitBounds(layer.getBounds(), { maxZoom: 18, padding: [30, 30] });
-  select(id, false);
-}
-function stopEdit(revert) {
-  const id = editingId, layer = byId[id];
-  editingId = null;
-  if (!layer) return;
-  layer.off('edit', onLiveEdit);
-  layer.editing.disable();
-  if (revert && editBefore) setGeom(layer, editBefore);
-  editBefore = null;
-  layer.setStyle(styleOf(id));
-}
-function onLiveEdit() { clearTimeout(liveTimer); liveTimer = setTimeout(() => updateLive(editingId), 250); }
-async function updateLive(id) {
-  const box = document.getElementById('live'); if (!box || !id) return;
+async function send(l, quiet) {
+  if (!CONFIG.api) { changed(); return; }
   try {
-    const a = await calcArea(byId[id].toGeoJSON(false).geometry);
-    const old = attrs[id] || {};
-    const diff = Number.isFinite(+old['表面積_m2']) && old['表面積_m2'] !== '' ? a.surf - old['表面積_m2'] : NaN;
-    box.innerHTML = `表面積 <b>${nf(a.surf)} m²</b>(${nf(a.surf / 1e4, 3)} ha)<br>投影面積 ${nf(a.proj)} m²` +
-      (Number.isFinite(diff) ? `<br><span class="muted">保存済みとの差 ${diff >= 0 ? '+' : ''}${nf(diff)} m²</span>` : '');
-  } catch (e) { box.textContent = '計算できませんでした:' + e.message; }
+    let who = store.get('editor');
+    if (!who) { who = prompt('計測者の名前を入れてください(この端末に記憶されます)') || ''; if (!who) throw new Error('計測者が入力されませんでした'); store.set('editor', who); }
+    if (!l.who) l.who = who;
+    if (!l.area) await recalc(l);
+    const a = l.area || {};
+    const c = l.getBounds().getCenter();
+    await postApi({ op: 'save', 計測ID: l.mid, 名前: l.name, メモ: l.memo, 作成日時: l.created, 計測者: l.who, 更新者: who,
+      投影面積_m2: +(+a.proj || 0).toFixed(1), 表面積_m2: +(+a.surf || 0).toFixed(1), 面積比: +(+a.ratio || 0).toFixed(4),
+      平均傾斜_度: +(+a.slope || 0).toFixed(2), DEM被覆率: +(+a.coverage || 0).toFixed(3),
+      中心緯度: +c.lat.toFixed(7), 中心経度: +c.lng.toFixed(7), geometry: JSON.stringify(geomOf(l)) });
+    l.st = 'synced';
+    setStatus(`「${title(l)}」をシートに保存しました`);
+  } catch (e) {
+    if (l.st === 'synced') l.st = 'pending';
+    setStatus('シートに保存できませんでした:' + e.message + '(一覧の「シートに送る」で再送できます)');
+    if (!quiet) alert('シートに保存できませんでした:' + e.message);
+  }
+  refreshPopup(l); changed();
+}
+async function removeRemote(mid) {
+  if (!CONFIG.api) return;
+  try { await postApi({ op: 'delete', 計測ID: mid }); setStatus('シートから削除しました'); }
+  catch (e) { setStatus('シートから削除できませんでした:' + e.message); }
 }
 
-function bindForm(id) {
-  const form = document.getElementById('entry'), msg = document.getElementById('msg');
-  form.onsubmit = async e => {
-    e.preventDefault();
-    const fd = Object.fromEntries(new FormData(form));
-    if (!fd['更新者']) { msg.className = 'msg ng'; msg.textContent = '更新者を入れてください。'; return; }
-    const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = '保存中…'; msg.textContent = '';
-    try {
-      const row = await postApi({ ...fd, mode: 'attr', [CONFIG.idField]: id });
-      labelById[id]?.setIcon(labelIcon(id));
-      select(id, false);
-      const m = document.getElementById('msg'); m.className = 'msg ok'; m.textContent = `保存しました(${row['更新日時']})`;
-    } catch (err) {
-      btn.disabled = false; btn.textContent = 'シートに保存';
-      msg.className = 'msg ng'; msg.textContent = '保存できませんでした:' + err.message;
-    }
+// シートの内容 + まだ送れていない手元の計測 を合わせて表示する
+async function loadSheet() {
+  if (!CONFIG.api) return;
+  setStatus('シートを読み込み中…');
+  try {
+    const r = await fetch(api('target=measure&t=' + Date.now())), text = await r.text();
+    let j; try { j = JSON.parse(text); } catch { throw new Error('APIがJSON以外を返しました(Apps Scriptのデプロイ設定を確認)'); }
+    if (!j.ok) throw new Error(j.error);
+    const remote = new Set();
+    j.rows.forEach(row => {
+      const mid = String(row['計測ID'] || ''); if (!mid || !row.geometry) return;
+      remote.add(mid);
+      let g; try { g = JSON.parse(row.geometry); } catch { return; }
+      const old = byMid.get(mid);
+      if (old && old.st !== 'synced') return;           // 手元で変更中のものは手元を優先
+      if (old) removeLayer(old);
+      const n = k => row[k] === '' || row[k] == null ? NaN : +row[k];
+      addLayer(g, { mid, name: row['名前'], memo: row['メモ'], created: String(row['作成日時'] || ''), who: row['計測者'], st: 'synced',
+        area: { proj: n('投影面積_m2'), surf: n('表面積_m2'), ratio: n('面積比'), slope: n('平均傾斜_度'), coverage: n('DEM被覆率') } });
+    });
+    // シートに無くなった「保存済み」は、他の人が削除したものなので外す
+    [...byMid.values()].filter(l => l.st === 'synced' && !remote.has(l.mid)).forEach(removeLayer);
+    setStatus(`シートの計測 ${remote.size} 件`);
+  } catch (e) { setStatus('シートを読み込めませんでした:' + e.message); }
+  changed();
+}
+
+// ===================== ローカルのGeoJSONファイル =====================
+// Chrome・Edge:一度ファイルを選ぶと、以後は変更のたびに自動で上書きし、次回起動時にそのファイルを読み込める
+// それ以外のブラウザ:ダウンロード/ファイル選択で保存・読み込み
+const FS = 'showSaveFilePicker' in window;
+const idb = (mode, val) => new Promise((res, rej) => {
+  const o = indexedDB.open('richfield2', 1);
+  o.onupgradeneeded = () => o.result.createObjectStore('kv');
+  o.onerror = () => rej(o.error);
+  o.onsuccess = () => {
+    const st = o.result.transaction('kv', mode).objectStore('kv');
+    const q = mode === 'readwrite' ? (val ? st.put(val, 'file') : st.delete('file')) : st.get('file');
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
   };
+});
+let fileHandle = null, fileReady = false;   // fileReady = 書き込み許可がある
+const fileOpts = { types: [{ description: 'GeoJSON', accept: { 'application/geo+json': ['.geojson', '.json'] } }] };
+
+async function writeFile() {
+  const w = await fileHandle.createWritable();
+  await w.write(JSON.stringify(toFC(), null, 1)); await w.close();
+}
+let saving = Promise.resolve();
+function autoSaveFile() {   // 書き込みが重ならないように順番に行う
+  if (!fileHandle || !fileReady) return;
+  saving = saving.then(writeFile).catch(() => { fileReady = false; render(); });
+}
+async function chooseSaveFile() {
+  if (!FS) { download(); return; }
+  try {
+    fileHandle = await showSaveFilePicker({ suggestedName: CONFIG.fileName, ...fileOpts });
+    await idb('readwrite', fileHandle); fileReady = true;
+    await writeFile(); setStatus(`「${fileHandle.name}」に保存しました(以後は自動で上書き)`);
+  } catch (e) { if (e.name !== 'AbortError') alert('保存できませんでした:' + e.message); }
+  render();
+}
+async function openFile() {
+  if (!FS) { document.getElementById('fileIn').click(); return; }
+  try {
+    const [h] = await showOpenFilePicker(fileOpts);
+    fileHandle = h; await idb('readwrite', h);
+    fileReady = (await h.requestPermission({ mode: 'readwrite' })) === 'granted';
+    mergeFile(JSON.parse(await (await h.getFile()).text()));
+  } catch (e) { if (e.name !== 'AbortError') alert('読み込めませんでした:' + e.message); }
+  render();
+}
+async function reopenFile() {   // 前回のファイルを読み込む(ボタンを押したときに許可を求める)
+  try {
+    fileReady = (await fileHandle.requestPermission({ mode: 'readwrite' })) === 'granted';
+    if (!fileReady) return;
+    mergeFile(JSON.parse(await (await fileHandle.getFile()).text()));
+  } catch (e) { alert('前回のファイルを開けませんでした:' + e.message); fileHandle = null; await idb('readwrite', null); }
+  render();
+}
+async function forgetFile() { fileHandle = null; fileReady = false; await idb('readwrite', null); render(); }
+function download() {
+  const blob = new Blob([JSON.stringify(toFC(), null, 1)], { type: 'application/geo+json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `計測範囲_${nowStr().slice(0, 10)}.geojson`; a.click();
+}
+// ファイルの計測のうち、まだ地図に無いものを追加(シートに無ければ「ローカルのみ」)
+function mergeFile(g) {
+  const feats = (g.type === 'FeatureCollection' ? g.features : [g]).filter(f => f?.geometry && /^(Multi)?Polygon$/.test(f.geometry.type));
+  let n = 0;
+  feats.forEach(f => {
+    const p = f.properties || {}, mid = p['計測ID'] || p.mid;
+    if (mid && byMid.has(mid)) return;
+    const l = addLayer(f.geometry, { mid, name: p['名前'] || p.name || '', memo: p['メモ'] || p.memo || '', created: p['作成日時'] || p.created,
+                                     who: p['更新者'] || p['計測者'] || '', st: 'local' });
+    recalc(l).then(() => { refreshPopup(l); changed(); });
+    n++;
+  });
+  setStatus(`ファイルから ${n} 件を追加しました(すでに表示中の ${feats.length - n} 件は省略)`);
+  if (drawn.getLayers().length) map.fitBounds(drawn.getBounds(), { maxZoom: 18, padding: [30, 30] });
+  changed();
 }
 
-function updateLabels() {
-  const on = map.getZoom() >= CONFIG.showLabels;
-  if (on && !map.hasLayer(labelLayer)) labelLayer.addTo(map);
-  if (!on && map.hasLayer(labelLayer)) map.removeLayer(labelLayer);
+// ===================== 右パネル(計測一覧) =====================
+function render() {
+  const ls = [...byMid.values()].sort((a, b) => b.created.localeCompare(a.created));
+  const sum = ls.reduce((t, l) => t + (l.area?.surf || 0), 0);
+  const nPend = ls.filter(l => l.st !== 'synced').length;
+  const fileBox = FS ? (fileHandle
+      ? `<div class="small">保存先:<b>${esc(fileHandle.name)}</b> ${fileReady ? '(変更のたびに自動で上書き)' : '<span style="color:#b25b00">(このあと許可が必要)</span>'}</div>
+         <div class="btns" style="margin-top:6px">${fileReady ? '' : '<button class="main" id="fReopen">前回のファイルを読み込む</button>'}
+           <button id="fOpen">別のファイルを開く</button><button id="fSave">別の名前で保存</button></div>
+         <div class="small" style="margin-top:4px"><a class="act" id="fForget">このファイルの自動保存をやめる</a></div>`
+      : `<div class="btns"><button class="main" id="fSave">ローカルに保存</button><button id="fOpen">ファイルを開く</button></div>
+         <div class="small muted" style="margin-top:4px">保存先を一度選ぶと、以後は自動で上書きされ、次回この画面を開いたときに読み込めます。</div>`)
+    : `<div class="btns"><button class="main" id="fSave">GeoJSONをダウンロード</button><button id="fOpen">ファイルを開く</button></div>
+       <div class="small muted" style="margin-top:4px">このブラウザでは自動上書きができません(Chrome・Edgeで使えます)。</div>`;
+  const panel = document.getElementById('panel');
+  panel.innerHTML = `
+    <div class="box"><h3>使い方</h3><div class="small">左上の<b>五角形</b>(または四角)ボタンで範囲を囲むと、1m DEMから<b>投影面積・表面積</b>を計算します。
+      計測は${CONFIG.api ? 'スプレッドシートに保存され、ほかの端末でも見られます' : 'このブラウザに保存されます'}。修正は鉛筆、削除はゴミ箱ボタン。黄色の点線が計算できる範囲です。</div></div>
+    <div class="box"><h3>ローカルのGeoJSONファイル</h3>${fileBox}
+      <input type="file" id="fileIn" accept=".geojson,.json,application/geo+json" style="display:none"></div>
+    <h2>計測一覧(${ls.length}件)${nPend && CONFIG.api ? ` <span class="badge pending">未送信 ${nPend}</span>` : ''}</h2>
+    ${nPend && CONFIG.api ? '<div class="btns" style="margin-bottom:8px"><button id="sendAll">未送信をまとめてシートに送る</button></div>' : ''}
+    ${ls.length ? ls.map(l => `
+      <div class="mcard ${l.st}" data-mid="${esc(l.mid)}">
+        <div class="mt"><a class="act" data-act="go">${esc(title(l))}</a><span class="muted small">${esc(l.created.slice(0, 16))}</span></div>
+        <div class="num">${l.area && Number.isFinite(l.area.surf) ? `表面積 <b>${nf(l.area.surf)} m²</b>(${nf(l.area.surf / 1e4, 3)} ha)<br>投影 ${nf(l.area.proj)} m² ・ 傾斜 ${l.area.slope.toFixed(1)}°` : '<span class="muted">計算中…</span>'}</div>
+        ${l.memo ? `<div class="small" style="white-space:pre-wrap">${esc(l.memo)}</div>` : ''}
+        <div class="small">${l.who ? esc(l.who) + ' ' : ''}<span class="badge ${l.st}">${BADGE[l.st]}</span></div>
+        <div class="small" style="margin-top:2px"><a class="act" data-act="name">名前・メモ</a>${l.st !== 'synced' && CONFIG.api ? ' ・ <a class="act" data-act="send">シートに送る</a>' : ''} ・ <a class="act" data-act="del">削除</a></div>
+      </div>`).join('') : '<p class="muted">まだ計測がありません。</p>'}
+    ${ls.length > 1 ? `<p class="small">合計 表面積 ${nf(sum)} m²(${nf(sum / 1e4, 3)} ha)</p>` : ''}`;
+  const $ = id => document.getElementById(id), on = (id, f) => { if ($(id)) $(id).onclick = f; };
+  on('fSave', chooseSaveFile); on('fOpen', openFile); on('fReopen', reopenFile); on('fForget', forgetFile);
+  $('fileIn').onchange = async e => { const f = e.target.files[0]; if (f) mergeFile(JSON.parse(await f.text())); };
+  on('sendAll', async () => { for (const l of [...byMid.values()].filter(l => l.st !== 'synced')) await send(l, true); });
+  panel.querySelectorAll('.mcard [data-act]').forEach(a => a.onclick = async () => {
+    const l = byMid.get(a.closest('.mcard').dataset.mid); if (!l) return;
+    const act = a.dataset.act;
+    if (act === 'go') { map.fitBounds(l.getBounds(), { maxZoom: 18, padding: [40, 40] }); l.openPopup(); }
+    if (act === 'name') rename(l);
+    if (act === 'send') send(l);
+    if (act === 'del' && confirm(`「${title(l)}」を削除しますか?` + (l.st === 'synced' ? '(シートからも削除されます)' : ''))) {
+      removeLayer(l); if (l.st === 'synced') await removeRemote(l.mid); changed();
+    }
+  });
 }
-map.on('zoomend', updateLabels);
 
-const go = () => { const v = document.getElementById('q').value.trim(); if (v) select(v, true); };
-document.getElementById('go').onclick = go;
-document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
-document.getElementById('reload').onclick = () => loadAll().catch(showErr);
+// ===================== 起動 =====================
+(async () => {
+  // 1) ブラウザ内の控え(前回の状態。未送信のものも含む)
+  try { const c = JSON.parse(store.get('rf2-cache') || 'null'); if (c) c.features.forEach(f => {
+    const p = f.properties, n = k => +p[k];
+    addLayer(f.geometry, { mid: p['計測ID'], name: p['名前'], memo: p['メモ'], created: p['作成日時'], who: p['更新者'], st: p['状態'] || 'pending',
+      area: { proj: n('投影面積_m2'), surf: n('表面積_m2'), ratio: n('面積比'), slope: n('平均傾斜_度'), coverage: n('DEM被覆率') } }); }); } catch {}
+  // 2) 前回のローカルファイル(許可済みならそのまま読み込む)
+  if (FS) try {
+    fileHandle = (await idb('readonly')) || null;
+    if (fileHandle && (await fileHandle.queryPermission({ mode: 'readwrite' })) === 'granted') {
+      fileReady = true; mergeFile(JSON.parse(await (await fileHandle.getFile()).text()));
+    }
+  } catch { fileHandle = null; }
+  render();
+  // 3) スプレッドシート
+  await loadSheet();
+  if (drawn.getLayers().length) map.fitBounds(drawn.getBounds(), { maxZoom: 17, padding: [30, 30] });
+})();
+
+document.getElementById('reload').onclick = loadSheet;
 let here = null;
 document.getElementById('locate').onclick = () => map.locate({ setView: true, maxZoom: 18 });
 map.on('locationfound', e => { if (here) here.remove(); here = L.circleMarker(e.latlng, { radius: 8, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1 }).addTo(map); });
 map.on('locationerror', () => alert('現在地を取得できませんでした(位置情報の許可を確認してください)'));
-
-const showErr = e => { setStatus(''); document.getElementById('panel').innerHTML =
-  `<p style="color:#c00">データを読み込めませんでした:${esc(e.message)}</p>
-   <p class="muted">index.html をダブルクリックで開いた場合は表示されません。GitHub Pages上、またはローカルサーバー経由で開いてください(README参照)。</p>`; };
-loadAll().catch(showErr);
-dem().catch(() => {});   // DEMのヘッダーだけ先に読んでおく
 </script>
 </body>
 </html>
