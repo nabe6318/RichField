@@ -20,7 +20,7 @@ function json_(obj) {
 }
 
 function fmt_(v) {
-  if (v instanceof Date) {
+  if (Object.prototype.toString.call(v) === '[object Date]') {
     const t = v.getHours() || v.getMinutes() || v.getSeconds();
     return Utilities.formatDate(v, Session.getScriptTimeZone(), t ? 'yyyy-MM-dd HH:mm:ss' : 'yyyy-MM-dd');
   }
@@ -66,7 +66,8 @@ function doPost(e) {
     const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
     const upd = { '更新日時': now, '更新者': d['更新者'] || '' };
     EDITABLE.forEach(k => { if (k in d) upd[k] = String(d[k] ?? ''); });
-    Object.keys(upd).forEach(k => sh.getRange(rowNo, head.indexOf(k) + 1).setValue(upd[k]));
+    // 書式を「書式なしテキスト」にしてから書く(日付や数値に自動変換されないように)
+    Object.keys(upd).forEach(k => sh.getRange(rowNo, head.indexOf(k) + 1).setNumberFormat('@').setValue(upd[k]));
 
     const row = sh.getRange(rowNo, 1, 1, head.length).getValues()[0];
     return json_({ ok: true, row: Object.fromEntries(head.map((h, i) => [h, fmt_(row[i])])) });

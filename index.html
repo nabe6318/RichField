@@ -96,7 +96,7 @@ const CONFIG = {
     { max: 8,  color: '#ff9800', label: '5〜8°' },
     { max: 1e9, color: '#e53935', label: '8° 以上' },
   ],
-  showLabels: 15,                       // このズーム以上でIDと圃場名を表示
+  showLabels: 15,                       // このズーム以上で圃場名を表示
   maxCells: 6e6,                        // 一度に計算するセル数の上限(約600ha)
 };
 // ======================================================================
@@ -291,6 +291,9 @@ async function loadAll() {
   else if (!selected) document.getElementById('panel').innerHTML = howto();
 }
 
+// 区画のラベルは圃場名のみ(未入力の区画には表示しない)
+const labelIcon = id => L.divIcon({ className: 'lbl', html: esc(attrs[id]?.[CONFIG.nameField] || ''), iconSize: [100, 14] });
+
 function draw(geo) {
   const first = !fieldLayer;
   if (fieldLayer) { map.removeLayer(fieldLayer); layerCtl.remove(); }
@@ -305,12 +308,12 @@ function draw(geo) {
           (a['表面積_m2'] ? `表面積 ${nf(a['表面積_m2'])} m²(${nf(a['表面積_m2'] / 1e4, 2)} ha)` : ''); }, { sticky: true });
       layer.on('click', e => { if (!drawing) select(id); });
       labelLayer.addLayer(L.marker(layer.getBounds().getCenter(), {
-        icon: L.divIcon({ className: 'lbl', html: esc(id) + (attrs[id]?.[CONFIG.nameField] ? '<br>' + esc(attrs[id][CONFIG.nameField]) : ''), iconSize: [80, 26] }),
+        icon: labelIcon(id),
         interactive: false }));
     },
   }).addTo(map);
   fieldLayer.bringToBack();
-  layerCtl = L.control.layers(bases, { '筆ポリゴン': fieldLayer, 'ID・圃場名': labelLayer, '計測範囲': drawn }).addTo(map);
+  layerCtl = L.control.layers(bases, { '筆ポリゴン': fieldLayer, '圃場名': labelLayer, '計測範囲': drawn }).addTo(map);
   updateLabels();
   if (first) map.fitBounds(fieldLayer.getBounds(), { padding: [10, 10] });
   if (selected && byId[selected]) select(selected, false);
@@ -402,7 +405,7 @@ function bindForm(id) {
       store.set('passcode', pass); store.set('editor', fd['更新者']);
       putRow(j.row);
       const lbl = labelLayer.getLayers().find(m => m.getLatLng().equals(byId[id].getBounds().getCenter()));
-      if (lbl) lbl.setIcon(L.divIcon({ className: 'lbl', html: esc(id) + (attrs[id][CONFIG.nameField] ? '<br>' + esc(attrs[id][CONFIG.nameField]) : ''), iconSize: [80, 26] }));
+      if (lbl) lbl.setIcon(labelIcon(id));
       select(id, false);
       const m = document.getElementById('msg'); m.className = 'msg ok'; m.textContent = `保存しました(${j.row['更新日時']})`;
     } catch (err) {
