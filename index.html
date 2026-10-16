@@ -49,6 +49,14 @@
   form.entry button { margin-top: 10px; width: 100%; padding: 9px; font-size: 15px; border: 0; border-radius: 6px; background: #3d5a2a; color: #fff; cursor: pointer; }
   form.entry button:disabled { background: #999; }
   .msg { font-size: 13px; margin-top: 6px; } .msg.ok { color: #2e7d32; } .msg.ng { color: #c62828; }
+  .shape { background: #fff; border: 1px solid #cfd8e3; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+  .shape h3 { font-size: 14px; margin: 0 0 6px; color: #2b4f7a; }
+  .shape .btns { display: flex; gap: 6px; margin-top: 8px; }
+  .shape button { flex: 1; padding: 8px; font-size: 14px; border: 0; border-radius: 6px; background: #2b4f7a; color: #fff; cursor: pointer; }
+  .shape button.sub { background: #e0e0e0; color: #333; }
+  .shape button:disabled { background: #999; }
+  .shape .live { font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .shape ul { margin: 4px 0 0 16px; padding: 0; font-size: 12px; color: #555; }
   .howto { background: #fff; border: 1px solid #e3e3e3; border-radius: 8px; padding: 8px 10px; }
   .howto ol { margin: 4px 0 0 18px; padding: 0; } .howto li { margin: 3px 0; }
   @media (max-width: 760px) {
@@ -224,7 +232,7 @@ let shapeNo = 0;
 async function measure(layer) {
   layer.bindPopup('計算中…', { minWidth: 210 }).openPopup();
   try {
-    const a = await calcArea(layer.toGeoJSON().geometry);
+    const a = await calcArea(layer.toGeoJSON(false).geometry);
     layer.area = a;
     layer.setPopupContent(areaHtml(a, `計測 ${layer.no}`));
     layer.bindTooltip(`計測${layer.no}:${nf(a.surf || a.proj)} m²`, { permanent: false, sticky: true });
@@ -238,7 +246,7 @@ map.on(L.Draw.Event.EDITED, e => e.layers.eachLayer(measure));
 
 document.getElementById('export').onclick = () => {
   const feats = drawn.getLayers().map(l => {
-    const f = l.toGeoJSON(), a = l.area || {};
+    const f = l.toGeoJSON(false), a = l.area || {};
     f.properties = { no: l.no, 投影面積_m2: +(+a.proj || 0).toFixed(1), 表面積_m2: +(+a.surf || 0).toFixed(1),
                      面積比: +(+a.ratio || 0).toFixed(4), 平均傾斜_度: +(+a.slope || 0).toFixed(2) };
     return f;
@@ -251,14 +259,16 @@ document.getElementById('export').onclick = () => {
 
 // ===================== 筆ポリゴンと属性表 =====================
 let fieldLayer = null, layerCtl = null, attrs = {}, byId = {}, selected = null, apiError = '';
+let origGeom = {}, labelById = {}, editingId = null;
 const labelLayer = L.layerGroup();
 const colorOf = id => {
   const v = parseFloat(attrs[id]?.[CONFIG.colorField]);
   return Number.isFinite(v) ? CONFIG.classes.find(c => v < c.max).color : null;
 };
 const styleOf = id => {
-  const c = colorOf(id), sel = id === selected;
-  return { color: sel ? '#00e5ff' : '#ffffff', weight: sel ? 4 : 1.5, fillColor: c || '#000', fillOpacity: c ? 0.45 : 0, opacity: 1 };
+  const c = colorOf(id), sel = id === selected, edited = !!attrs[id]?.geometry;
+  return { color: id === editingId ? '#ff4081' : sel ? '#00e5ff' : '#ffffff', weight: sel || id === editingId ? 4 : 1.5,
+           dashArray: edited ? '8 5' : null, fillColor: c || '#000', fillOpacity: c ? 0.45 : 0, opacity: 1 };
 };
 
 const bust = u => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
@@ -284,6 +294,15 @@ async function loadAll() {
     CONFIG.api ? loadApi().catch(e => { apiError = e.message; return loadCsv(); }) : loadCsv(),
   ]);
   attrs = {}; rows.forEach(putRow);
+  // シートの geometry 列(地図で修正した形状)があれば、筆ポリゴンの形より優先する
+  origGeom = {};
+  geo.features.forEach(f => {
+    const id = String(f.properties[CONFIG.idField]);
+    origGeom[id] = f.geometry;
+    const g = attrs[id]?.geometry;
+    if (g) try { f.geometry = JSON.parse(g); } catch { console.warn('geometry を読めません', id); }
+  });
+  if (editingId) stopEdit(false);
   draw(geo);
   setStatus(`${Object.keys(byId).length} 筆` + (apiError ? '(保存済みCSVを表示中)' : ''));
   if (apiError) document.getElementById('panel').innerHTML =
@@ -297,7 +316,7 @@ const labelIcon = id => L.divIcon({ className: 'lbl', html: esc(attrs[id]?.[CONF
 function draw(geo) {
   const first = !fieldLayer;
   if (fieldLayer) { map.removeLayer(fieldLayer); layerCtl.remove(); }
-  labelLayer.clearLayers(); byId = {};
+  labelLayer.clearLayers(); byId = {}; labelById = {};
   fieldLayer = L.geoJSON(geo, {
     style: f => styleOf(String(f.properties[CONFIG.idField])),
     onEachFeature: (f, layer) => {
@@ -306,10 +325,8 @@ function draw(geo) {
       layer.bindTooltip(() => { const a = attrs[id] || {};
         return `ID ${esc(id)}${a[CONFIG.nameField] ? ' ' + esc(a[CONFIG.nameField]) : ''}<br>` +
           (a['表面積_m2'] ? `表面積 ${nf(a['表面積_m2'])} m²(${nf(a['表面積_m2'] / 1e4, 2)} ha)` : ''); }, { sticky: true });
-      layer.on('click', e => { if (!drawing) select(id); });
-      labelLayer.addLayer(L.marker(layer.getBounds().getCenter(), {
-        icon: labelIcon(id),
-        interactive: false }));
+      layer.on('click', e => { if (!drawing && (!editingId || editingId === id)) select(id); });
+      labelLayer.addLayer(labelById[id] = L.marker(layer.getBounds().getCenter(), { icon: labelIcon(id), interactive: false }));
     },
   }).addTo(map);
   fieldLayer.bringToBack();
@@ -327,7 +344,8 @@ map.on(L.Draw.Event.DRAWSTOP, () => setTimeout(() => drawing = false, 50));
 const legend = L.control({ position: 'bottomright' });
 legend.onAdd = () => {
   const d = L.DomUtil.create('div', 'legend');
-  d.innerHTML = `<b>平均傾斜</b><br>` + CONFIG.classes.map(c => `<i style="background:${c.color}"></i>${c.label}`).join('<br>');
+  d.innerHTML = `<b>平均傾斜</b><br>` + CONFIG.classes.map(c => `<i style="background:${c.color}"></i>${c.label}`).join('<br>') +
+    `<br><i style="background:transparent;border:2px dashed #555"></i>形状を修正した区画`;
   return d;
 };
 legend.addTo(map);
@@ -335,7 +353,8 @@ legend.addTo(map);
 const howto = () => `<div class="howto"><b>使い方</b><ol>
   <li>筆ポリゴンをクリック → 面積と属性(シートの内容)を表示</li>
   <li>左上の <b>五角形</b>(または四角)ボタン → 地図をクリックして範囲を囲む → 囲った範囲の<b>投影面積・表面積</b>がポップアップで出ます</li>
-  <li>囲った範囲は鉛筆ボタンで修正、ゴミ箱で削除できます。「計測を保存」でGeoJSONに書き出せます</li></ol>
+  <li>囲った範囲は鉛筆ボタンで修正、ゴミ箱で削除できます。「計測を保存」でGeoJSONに書き出せます</li>
+  <li>実際の区画と形が違う筆は、筆を選んで「形状を編集」→ 頂点を動かして保存すると、面積も計算し直してシートに記録されます</li></ol>
   <p class="small muted">表面積は1m DEMの傾斜から求めた値です(投影面積 × 平均 1/cosθ)。</p></div>`;
 
 function select(id, zoom) {
@@ -348,7 +367,7 @@ function select(id, zoom) {
   if (zoom) map.fitBounds(layer.getBounds(), { maxZoom: 18 });
   const a = attrs[id] || {};
   const area = (k) => a[k] !== undefined && a[k] !== '' ? `${nf(a[k])} m²<br><span class="muted">${nf(a[k] / 100, 1)} a / ${nf(a[k] / 1e4, 3)} ha</span>` : '';
-  const shown = new Set([CONFIG.idField, ...CONFIG.editable, '投影面積_m2', '表面積_m2', '面積比', '平均傾斜_度']);
+  const shown = new Set([CONFIG.idField, ...CONFIG.editable, '投影面積_m2', '表面積_m2', '面積比', '平均傾斜_度', 'geometry']);
   const others = Object.keys(a).filter(k => !shown.has(k) && a[k] !== '');
   panel.innerHTML = `
     <h2>ID ${esc(id)} ${a[CONFIG.nameField] ? esc(a[CONFIG.nameField]) : ''}</h2>
@@ -360,6 +379,7 @@ function select(id, zoom) {
       ${CONFIG.editable.map(k => `<tr><th>${esc(k)}</th><td>${esc(a[k])}</td></tr>`).join('')}
     </table>
     <p class="small"><a class="act" id="recalc">この筆を地図上のDEMで再計算</a> <span id="recalcOut" class="muted"></span></p>
+    ${CONFIG.api && !apiError ? shapeHtml(id, a) : ''}
     ${CONFIG.api && !apiError ? formHtml(id, a) : (CONFIG.api ? '' : '<p class="small muted">属性の入力は、書き込みAPIを設定すると使えます(README参照)。</p>')}
     ${others.length ? `<h2>その他の属性</h2><table>${others.map(k => `<tr><th>${esc(k)}</th><td>${esc(a[k])}</td></tr>`).join('')}</table>` : ''}`;
   panel.scrollTop = 0;
@@ -368,7 +388,7 @@ function select(id, zoom) {
     try { const r = await calcArea(layer.feature.geometry); out.innerHTML = `投影 ${nf(r.proj)} m² / 表面 ${nf(r.surf)} m²`; }
     catch (e) { out.textContent = '計算できませんでした:' + e.message; }
   };
-  if (CONFIG.api && !apiError) bindForm(id);
+  if (CONFIG.api && !apiError) { bindForm(id); bindShape(id); }
 }
 
 // ---------- 属性の入力フォーム ----------
@@ -385,29 +405,121 @@ function formHtml(id, a) {
     <label>更新者 <span style="color:#c62828">*</span></label>${who}
     <button type="submit">シートに保存</button><div class="msg" id="msg"></div></form>`;
 }
+// Apps Scriptへの保存(合言葉の確認つき)。成功したら更新後の行を返す
+async function postApi(body) {
+  let pass = store.get('passcode');
+  if (!pass) { pass = prompt('入力用の合言葉を入れてください(この端末に記憶されます)'); if (!pass) throw new Error('合言葉が入力されませんでした'); }
+  // Content-Typeを付けない(text/plain扱い)ことで、Apps Scriptへ直接POSTできる
+  const res = await fetch(CONFIG.api, { method: 'POST', body: JSON.stringify({ ...body, passcode: pass }) });
+  const j = await res.json();
+  if (!j.ok) {
+    if (j.error === 'passcode') { store.set('passcode', ''); throw new Error('合言葉が違います。もう一度保存してください。'); }
+    throw new Error(j.error);
+  }
+  store.set('passcode', pass);
+  if (body['更新者']) store.set('editor', body['更新者']);
+  putRow(j.row);
+  return j.row;
+}
+
+// ---------- 区画の形状の編集 ----------
+const round7 = c => typeof c[0] === 'number' ? [+c[0].toFixed(7), +c[1].toFixed(7)] : c.map(round7);
+const setGeom = (layer, g) => { layer.setLatLngs(L.GeoJSON.coordsToLatLngs(g.coordinates, g.type === 'Polygon' ? 1 : 2)); layer.feature.geometry = g; };
+let editBefore = null, liveTimer = null, liveArea = null;
+
+function shapeHtml(id, a) {
+  if (editingId === id) return `<div class="shape"><h3>形状を編集中</h3>
+    <ul><li>白い□をドラッグ:頂点を動かす</li><li>辺の中央の薄い□をドラッグ:頂点を足す</li><li>白い□をクリック:頂点を消す</li></ul>
+    <div class="live" id="live">計算中…</div>
+    <div class="btns"><button id="shapeSave">形状と面積を保存</button><button class="sub" id="shapeCancel">やめる</button></div>
+    <div class="msg" id="shapeMsg"></div></div>`;
+  return `<div class="shape"><h3>区画の形状</h3>
+    <div class="small">${a.geometry ? `地図で修正済み(${esc(a['形状更新日時'] || '')})` : '農水省の筆ポリゴンのまま'}</div>
+    <div class="btns"><button id="shapeEdit">形状を編集</button>${a.geometry ? '<button class="sub" id="shapeReset">元の筆ポリゴンに戻す</button>' : ''}</div>
+    <div class="msg" id="shapeMsg"></div></div>`;
+}
+
+function bindShape(id) {
+  const layer = byId[id], $ = k => document.getElementById(k);
+  const msg = (t, ok) => { const m = $('shapeMsg'); if (m) { m.className = 'msg ' + (ok ? 'ok' : 'ng'); m.textContent = t; } };
+  if (editingId === id) {
+    $('shapeCancel').onclick = () => { stopEdit(true); select(id, false); };
+    $('shapeSave').onclick = async () => {
+      const btn = $('shapeSave'); btn.disabled = true; btn.textContent = '保存中…';
+      try {
+        const g = layer.toGeoJSON(false).geometry; g.coordinates = round7(g.coordinates);
+        await saveShape(id, g);
+        stopEdit(false); select(id, false); msg('形状と面積を保存しました', true);
+      } catch (e) { btn.disabled = false; btn.textContent = '形状と面積を保存'; msg('保存できませんでした:' + e.message); }
+    };
+    updateLive(id);
+    return;
+  }
+  $('shapeEdit').onclick = () => startEdit(id);
+  if ($('shapeReset')) $('shapeReset').onclick = async () => {
+    if (!confirm('この区画を元の筆ポリゴンの形に戻し、面積も計算し直します。よろしいですか?')) return;
+    try { await saveShape(id, origGeom[id], true); select(id, false); msg('元の形に戻しました', true); }
+    catch (e) { msg('戻せませんでした:' + e.message); }
+  };
+}
+
+async function saveShape(id, g, reset) {
+  let who = store.get('editor');
+  if (!who) { who = prompt('更新者の名前を入れてください'); if (!who) throw new Error('更新者が入力されませんでした'); }
+  const a = await calcArea(g);
+  if (!Number.isFinite(a.surf)) throw new Error('DEMの範囲外のため面積を計算できません');
+  await postApi({ mode: 'shape', [CONFIG.idField]: id, geometry: reset ? '' : JSON.stringify(g), 更新者: who,
+    投影面積_m2: +a.proj.toFixed(1), 表面積_m2: +a.surf.toFixed(1), 面積比: +a.ratio.toFixed(4),
+    平均傾斜_度: +a.slope.toFixed(2), DEM被覆率: +a.coverage.toFixed(3) });
+  setGeom(byId[id], g);
+  byId[id].setStyle(styleOf(id));
+  labelById[id]?.setLatLng(byId[id].getBounds().getCenter());
+}
+
+function startEdit(id) {
+  if (editingId) stopEdit(true);
+  const layer = byId[id];
+  editingId = id; editBefore = JSON.parse(JSON.stringify(layer.feature.geometry));
+  layer.setStyle(styleOf(id)); layer.bringToFront();
+  layer.editing.enable();
+  layer.on('edit', onLiveEdit);
+  map.fitBounds(layer.getBounds(), { maxZoom: 18, padding: [30, 30] });
+  select(id, false);
+}
+function stopEdit(revert) {
+  const id = editingId, layer = byId[id];
+  editingId = null;
+  if (!layer) return;
+  layer.off('edit', onLiveEdit);
+  layer.editing.disable();
+  if (revert && editBefore) setGeom(layer, editBefore);
+  editBefore = null;
+  layer.setStyle(styleOf(id));
+}
+function onLiveEdit() { clearTimeout(liveTimer); liveTimer = setTimeout(() => updateLive(editingId), 250); }
+async function updateLive(id) {
+  const box = document.getElementById('live'); if (!box || !id) return;
+  try {
+    const a = await calcArea(byId[id].toGeoJSON(false).geometry);
+    const old = attrs[id] || {};
+    const diff = Number.isFinite(+old['表面積_m2']) && old['表面積_m2'] !== '' ? a.surf - old['表面積_m2'] : NaN;
+    box.innerHTML = `表面積 <b>${nf(a.surf)} m²</b>(${nf(a.surf / 1e4, 3)} ha)<br>投影面積 ${nf(a.proj)} m²` +
+      (Number.isFinite(diff) ? `<br><span class="muted">保存済みとの差 ${diff >= 0 ? '+' : ''}${nf(diff)} m²</span>` : '');
+  } catch (e) { box.textContent = '計算できませんでした:' + e.message; }
+}
+
 function bindForm(id) {
   const form = document.getElementById('entry'), msg = document.getElementById('msg');
   form.onsubmit = async e => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(form));
     if (!fd['更新者']) { msg.className = 'msg ng'; msg.textContent = '更新者を入れてください。'; return; }
-    let pass = store.get('passcode');
-    if (!pass) { pass = prompt('入力用の合言葉を入れてください(この端末に記憶されます)'); if (!pass) return; }
     const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = '保存中…'; msg.textContent = '';
     try {
-      // Content-Typeを付けない(text/plain扱い)ことで、Apps Scriptへ直接POSTできる
-      const res = await fetch(CONFIG.api, { method: 'POST', body: JSON.stringify({ ...fd, [CONFIG.idField]: id, passcode: pass }) });
-      const j = await res.json();
-      if (!j.ok) {
-        if (j.error === 'passcode') { store.set('passcode', ''); throw new Error('合言葉が違います。もう一度保存してください。'); }
-        throw new Error(j.error);
-      }
-      store.set('passcode', pass); store.set('editor', fd['更新者']);
-      putRow(j.row);
-      const lbl = labelLayer.getLayers().find(m => m.getLatLng().equals(byId[id].getBounds().getCenter()));
-      if (lbl) lbl.setIcon(labelIcon(id));
+      const row = await postApi({ ...fd, mode: 'attr', [CONFIG.idField]: id });
+      labelById[id]?.setIcon(labelIcon(id));
       select(id, false);
-      const m = document.getElementById('msg'); m.className = 'msg ok'; m.textContent = `保存しました(${j.row['更新日時']})`;
+      const m = document.getElementById('msg'); m.className = 'msg ok'; m.textContent = `保存しました(${row['更新日時']})`;
     } catch (err) {
       btn.disabled = false; btn.textContent = 'シートに保存';
       msg.className = 'msg ng'; msg.textContent = '保存できませんでした:' + err.message;
