@@ -51,6 +51,11 @@
   .cat { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; cursor: pointer; }
   .cat.off { opacity: .35; text-decoration: line-through; }
   .cat .n { color: #777; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .leaflet-tooltip.gpslbl { background: rgba(255,255,255,.88); border: 0; box-shadow: 0 0 2px rgba(0,0,0,.5); font-size: 11px; font-weight: 700; padding: 0 4px; border-radius: 3px; }
+  .leaflet-tooltip.gpslbl::before { display: none; }
+  .cow { display: flex; gap: 6px; align-items: center; font-size: 12px; padding: 2px 0; cursor: pointer; }
+  .cow i { width: 11px; height: 11px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #555; flex: none; }
+  .cow .n { margin-left: auto; color: #666; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .lbl { background: none; border: 0; box-shadow: none; font-size: 11px; font-weight: 700; color: #222; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; text-align: center; white-space: nowrap; }
   @media (max-width: 760px) {
     #main { flex-direction: column; }
@@ -87,6 +92,8 @@ const CONFIG = {
   presets: [
     { name: 'RichField圃場2026', url: 'data/field_area.gpkg' },
   ],
+  // 牛のGPS:スプレッドシートのApps Script(gas/gps_simulator.gs)のウェブアプリURL。空なら使わない
+  gps: { api: 'https://script.google.com/macros/s/AKfycby88t0BlfWrMXep0PYgZ_NrlBp9qSnlLl8b1YUnvpuE12gcHL5PU2JN9m1Oe0BS-YuB/exec', hours: 6, refreshMin: 5 },
   geoName: '計測範囲.geojson',           // 作業フォルダに保存する計測(続きから作業するときに読み込む方)
   csvName: '計測範囲.csv',               // 同じ内容の表(Excel用。WKT列に形状)
   maxCells: 8e6,                        // 1回の計算で読むDEMセル数の上限(1mなら約800ha)
@@ -757,6 +764,101 @@ function fitAll() {
   if (b.isValid()) map.fitBounds(b, { maxZoom: 17, padding: [20, 20] });
 }
 
+// ===================== 牛のGPS =====================
+// スプレッドシートの「GPS記録」の X・Y(平面直角座標)から点を作り、GPS番号をラベルにする
+const gpsLayer = L.layerGroup().addTo(map);
+layerCtl.addOverlay(gpsLayer, '牛の位置(GPS)');
+const gps = { data: null, err: '', track: true, auto: true, hours: CONFIG.gps.hours, timer: null, by: {}, loading: false };
+const jst = t => new Date(String(t).replace(' ', 'T') + '+09:00').getTime();
+function xyToLatLng(X, Y, zone) {   // 日本の測量の慣例:X=北向き、Y=東向き
+  const e = 6668 + Number(zone); if (!CRS[e]) return null;
+  const [lng, lat] = trOf(e).inverse([Y, X]); return [lat, lng];
+}
+async function loadGps(fit) {
+  if (!CONFIG.gps.api || gps.loading) return;
+  gps.loading = true; render();
+  try {
+    const r = await fetch(CONFIG.gps.api + (CONFIG.gps.api.includes('?') ? '&' : '?') + 'hours=' + gps.hours + '&t=' + Date.now());
+    const t = await r.text(); let j;
+    try { j = JSON.parse(t); } catch { throw new Error('APIがJSON以外を返しました(デプロイの「アクセスできるユーザー」が「全員」か確認)'); }
+    if (!j.ok) throw new Error(j.error);
+    gps.data = j; gps.err = '';
+    drawGps();
+    if (fit) fitGps();
+  } catch (e) { gps.err = e.message; }
+  gps.loading = false; render();
+}
+const distM = (a, b) => { const k = Math.PI / 180; return 6371000 * Math.hypot((b[0] - a[0]) * k, (b[1] - a[1]) * k * Math.cos(a[0] * k)); };
+const pathLen = pts => pts.slice(1).reduce((s, p, i) => s + distM(pts[i].ll, p.ll), 0);
+function drawGps() {
+  gpsLayer.clearLayers(); gps.by = {};
+  const j = gps.data; if (!j) return;
+  j.rows.forEach(([time, id, lat, lon, X, Y, zone]) => {
+    const ll = Number.isFinite(X) && Number.isFinite(Y) && zone ? xyToLatLng(X, Y, zone) : [lat, lon];
+    if (ll) (gps.by[id] ||= []).push({ time, ll, lat, lon, X, Y, zone });
+  });
+  if (j.area?.length > 2) gpsLayer.addLayer(L.polygon(j.area.map(c => [c[1], c[0]]), { color: '#fff', weight: 2, dashArray: '5 5', fill: false, interactive: false }));
+  j.cows.forEach(c => {
+    const pts = gps.by[c.id]; if (!pts?.length) return;
+    if (gps.track && pts.length > 1) {
+      gpsLayer.addLayer(L.polyline(pts.map(p => p.ll), { color: c.color, weight: 2, opacity: 0.85, interactive: false }));
+      pts.slice(0, -1).forEach(p => gpsLayer.addLayer(L.circleMarker(p.ll, { radius: 2, color: c.color, weight: 1, fillOpacity: 0.9, interactive: false })));
+    }
+    const last = pts[pts.length - 1];
+    gpsLayer.addLayer(L.circleMarker(last.ll, { radius: 7, color: '#fff', weight: 2, fillColor: c.color, fillOpacity: 1 })
+      .bindTooltip(esc(c.id), { permanent: true, direction: 'right', offset: [7, 0], className: 'gpslbl' })
+      .bindPopup(() => gpsPopup(c, gps.by[c.id]), { minWidth: 220 }));
+  });
+}
+function gpsPopup(c, pts) {
+  const l = pts[pts.length - 1], t1 = jst(l.time) - 3600e3;
+  const ago = Math.round((Date.now() - jst(l.time)) / 60e3);
+  return `<b style="color:${c.color}">●</b> <b>${esc(c.id)}</b> ${esc(c.name)}
+    <div class="attr"><table>
+      <tr><th>日時</th><td>${esc(l.time)}${ago > 3 * (gps.data.interval || 5) ? ` <span class="warn">(${ago}分前)</span>` : ''}</td></tr>
+      <tr><th>緯度・経度</th><td>${l.lat.toFixed(7)}, ${l.lon.toFixed(7)}</td></tr>
+      <tr><th>X・Y(${esc(l.zone)}系)</th><td>${nf(l.X, 2)}, ${nf(l.Y, 2)} m</td></tr>
+      <tr><th>直近1時間の移動</th><td>${nf(pathLen(pts.filter(p => jst(p.time) >= t1)))} m</td></tr>
+      <tr><th>${gps.hours}時間の移動</th><td>${nf(pathLen(pts))} m</td></tr>
+    </table></div>`;
+}
+function fitGps() {
+  const b = L.latLngBounds([]); Object.values(gps.by).forEach(ps => ps.forEach(p => b.extend(p.ll)));
+  if (b.isValid()) map.fitBounds(b, { maxZoom: 18, padding: [40, 40] });
+}
+function setGpsTimer() {
+  clearInterval(gps.timer); gps.timer = null;
+  if (CONFIG.gps.api && gps.auto) gps.timer = setInterval(() => loadGps(false), CONFIG.gps.refreshMin * 60e3);
+}
+function gpsBox() {
+  if (!CONFIG.gps.api) return `<div class="small muted">スプレッドシート(gas/gps_simulator.gs)のウェブアプリURLを <code>CONFIG.gps.api</code> に設定すると、牛の位置を表示します。</div>`;
+  const j = gps.data;
+  const cows = j ? j.cows.map(c => { const ps = gps.by[c.id] || [], l = ps[ps.length - 1];
+    return `<div class="cow" data-cow="${esc(c.id)}"><i style="background:${c.color}"></i><b>${esc(c.id)}</b> ${esc(c.name)}
+      <span class="n">${l ? esc(l.time.slice(11, 16)) + ' ・ ' + nf(pathLen(ps)) + ' m' : '記録なし'}</span></div>`; }).join('') : '';
+  return `${gps.err ? `<div class="small warn">読み込めませんでした:${esc(gps.err)}</div>` : ''}
+    ${j ? `<div class="small">${esc(j.areaName || '')} ・ 最終 ${esc((j.rows[j.rows.length - 1] || [''])[0].slice(5, 16))}${gps.loading ? ' ・ 更新中…' : ''}</div>
+      <div style="margin:4px 0">${cows}</div><div class="small muted" style="margin-bottom:4px">右の数字:最終時刻 ・ 表示期間の移動距離</div>` : `<div class="small">${gps.loading ? '読み込み中…' : ''}</div>`}
+    <div class="small">期間 <select id="gHours">${[1, 3, 6, 12, 24, 72].map(h => `<option ${h === gps.hours ? 'selected' : ''} value="${h}">${h}時間</option>`).join('')}</select>
+      <label><input type="checkbox" id="gTrack" ${gps.track ? 'checked' : ''}>軌跡</label>
+      <label><input type="checkbox" id="gAuto" ${gps.auto ? 'checked' : ''}>${CONFIG.gps.refreshMin}分ごとに更新</label></div>
+    <div class="small" style="margin-top:4px"><a class="act" id="gReload">今すぐ更新</a> ・ <a class="act" id="gFit">牛の位置へ移動</a></div>`;
+}
+function bindGps(panel) {
+  const $ = id => document.getElementById(id);
+  if (!$('gHours')) return;
+  $('gHours').onchange = e => { gps.hours = +e.target.value; loadGps(false); };
+  $('gTrack').onchange = e => { gps.track = e.target.checked; drawGps(); };
+  $('gAuto').onchange = e => { gps.auto = e.target.checked; setGpsTimer(); };
+  $('gReload').onclick = () => loadGps(false);
+  $('gFit').onclick = () => { if (!map.hasLayer(gpsLayer)) gpsLayer.addTo(map); fitGps(); };
+  panel.querySelectorAll('.cow[data-cow]').forEach(d => d.onclick = () => {
+    const ps = gps.by[d.dataset.cow]; if (!ps?.length) return;
+    map.setView(ps[ps.length - 1].ll, Math.max(map.getZoom(), 18));
+    gpsLayer.eachLayer(l => { if (l.getPopup && l.getPopup() && l.getLatLng && l.getLatLng().equals(ps[ps.length - 1].ll)) l.openPopup(); });
+  });
+}
+
 // ===================== 右パネル =====================
 const FROM = { config: '登録済み', folder: 'フォルダ', added: '追加' };
 function render() {
@@ -802,6 +904,7 @@ function render() {
     <div class="box"><h3>作業フォルダ</h3>${folder}</div>
     <div class="box"><h3>DEM(${dems.length})</h3>${demList || '<div class="small warn">DEMがありません。表面積の計算にはDEM(GeoTIFF)が必要です。</div>'}
       <div class="btns" style="margin-top:6px"><button id="addDem">DEMを追加(.tif)</button></div></div>
+    <div class="box"><h3>牛のGPS</h3>${gpsBox()}</div>
     <div class="box"><h3>レイヤ(${vlayers.length})</h3>${vecList || '<div class="small muted">区画などのポリゴン(GPKG・GeoJSON)を重ねて表示できます。区画をクリックすると属性と面積が見られます。</div>'}
       ${CONFIG.presets.length ? `<div class="small" style="margin-top:8px">登録済みのレイヤ
         <select id="presetSel" style="font-size:13px;max-width:220px"><option value="">選んでください</option>
@@ -818,6 +921,7 @@ function render() {
         <div class="small">${l.who ? esc(l.who) + ' ・ ' : ''}<a class="act" data-act="name">名前・メモ</a> ・ <a class="act" data-act="del">削除</a></div>
       </div>`).join('')}
     ${ls.length > 1 ? `<p class="small">合計 表面積 ${nf(sum)} m²(${nf(sum / 1e4, 3)} ha)</p><p class="small"><a class="act" id="clearAll">計測をすべて消す</a></p>` : ''}`;
+  bindGps(panel);
   on('dChoose', chooseDir); on('dReopen', reopenDir); on('dClose', closeDir);
   on('dReload', async () => { dirReady = true; await loadDir(); render(); });
   on('dlGeo', () => save(CONFIG.geoName.replace(/(\.\w+)$/, `_${nowStr().slice(0, 10)}$1`), JSON.stringify(toFC(), null, 1), 'application/geo+json'));
@@ -876,6 +980,7 @@ function render() {
   } catch { dir = null; busy = false; }
   render();
   fitAll();
+  if (CONFIG.gps.api) { await loadGps(false); setGpsTimer(); }
 })();
 
 let here = null;
