@@ -81,6 +81,12 @@
 const CONFIG = {
   // 最初から読み込むDEM(このリポジトリに置いたもの)。地域を限らずに使うなら [] にする
   dems: [{ url: 'data/dem.tif', name: 'サンプル(興部町 664351)' }],
+  // 最初から表示するレイヤ(.gpkg・.geojson、このリポジトリに置いたもの)。プルダウンで選んだときだけ表示するなら [] にする
+  layers: [{ url: 'data/field_area.gpkg', name: 'field_area' }],
+  // プルダウンから選んで表示できるレイヤ(data フォルダに置いた .gpkg / .geojson)
+  presets: [
+    { name: 'RichField圃場2026', url: 'data/field_area.gpkg' },
+  ],
   geoName: '計測範囲.geojson',           // 作業フォルダに保存する計測(続きから作業するときに読み込む方)
   csvName: '計測範囲.csv',               // 同じ内容の表(Excel用。WKT列に形状)
   maxCells: 8e6,                        // 1回の計算で読むDEMセル数の上限(1mなら約800ha)
@@ -350,8 +356,8 @@ function readGeoJSON(text, name) {
 // ===================== ベクタレイヤ =====================
 const vlayers = [];     // { name, from, fc, gl, color, labelField, labels, crs, done }
 let layerCtl = null, colorNo = 0;
-async function addVectorFile(file, from) {
-  const name = baseName(file.name);
+async function addVectorFile(file, from, label) {
+  const name = label || baseName(file.name);
   if (file.size > 300e6) throw new Error('ファイルが大きすぎます(300MBまで)');
   const list = /\.gpkg$/i.test(file.name) ? await readGpkg(await file.arrayBuffer(), name) : readGeoJSON(await file.text(), name);
   return list.map(x => addVector(x.name, x.fc, from, x.crs));
@@ -422,6 +428,20 @@ function drawLegend() {
     V.cats.map(k => `<span style="${V.hidden.has(k) ? 'opacity:.35' : ''}"><i style="background:${V.catColor[k]}"></i>${esc(k)}</span>`).join('<br>')).join('<br>');
 }
 map.on('overlayadd overlayremove', drawLegend);
+async function loadPreset(i) {
+  const P = CONFIG.presets[i]; if (!P) return;
+  const old = vlayers.find(V => V.preset === P.url);
+  if (old) { if (!map.hasLayer(old.gl)) old.gl.addTo(map); map.fitBounds(old.gl.getBounds(), { maxZoom: 17 }); return; }
+  setStatus(`「${P.name}」を読み込み中…`);
+  try {
+    const r = await fetch(P.url); if (!r.ok) throw new Error(`${P.url} が見つかりません`);
+    const list = /\.gpkg$/i.test(P.url) ? await readGpkg(await r.arrayBuffer(), P.name) : readGeoJSON(await r.text(), P.name);
+    const vs = list.map(x => { const V = addVector(list.length > 1 ? x.name : P.name, x.fc, 'config', x.crs); V.preset = P.url; return V; });
+    if (vs[0]?.gl.getBounds().isValid()) map.fitBounds(vs[0].gl.getBounds(), { maxZoom: 17 });
+    setStatus(`「${P.name}」を表示しました`);
+  } catch (e) { setStatus(''); alert(`「${P.name}」を読み込めませんでした:${e.message}`); }
+  render();
+}
 function removeVector(V) {
   map.removeLayer(V.gl); map.removeLayer(V.labels); layerCtl.removeLayer(V.gl);
   vlayers.splice(vlayers.indexOf(V), 1);
@@ -738,7 +758,7 @@ function fitAll() {
 }
 
 // ===================== 右パネル =====================
-const FROM = { config: '公開', folder: 'フォルダ', added: '追加' };
+const FROM = { config: '登録済み', folder: 'フォルダ', added: '追加' };
 function render() {
   const $ = id => document.getElementById(id), on = (id, f) => { if ($(id)) $(id).onclick = f; };
   const ls = [...byMid.values()].sort((a, b) => b.created.localeCompare(a.created));
@@ -783,6 +803,9 @@ function render() {
     <div class="box"><h3>DEM(${dems.length})</h3>${demList || '<div class="small warn">DEMがありません。表面積の計算にはDEM(GeoTIFF)が必要です。</div>'}
       <div class="btns" style="margin-top:6px"><button id="addDem">DEMを追加(.tif)</button></div></div>
     <div class="box"><h3>レイヤ(${vlayers.length})</h3>${vecList || '<div class="small muted">区画などのポリゴン(GPKG・GeoJSON)を重ねて表示できます。区画をクリックすると属性と面積が見られます。</div>'}
+      ${CONFIG.presets.length ? `<div class="small" style="margin-top:8px">登録済みのレイヤ
+        <select id="presetSel" style="font-size:13px;max-width:220px"><option value="">選んでください</option>
+        ${CONFIG.presets.map((P, i) => `<option value="${i}">${esc(P.name)}${vlayers.some(V => V.preset === P.url) ? '(表示中)' : ''}</option>`).join('')}</select></div>` : ''}
       <div class="btns" style="margin-top:6px"><button id="addVec">レイヤを追加(.gpkg・.geojson)</button></div></div>
     <h2>計測一覧(${ls.length}件)</h2>
     <div class="small muted" style="margin-bottom:6px">左上の五角形(または四角)ボタンで範囲を囲むと、表面積・投影面積を計算します。修正は鉛筆、削除はゴミ箱。</div>
@@ -799,6 +822,7 @@ function render() {
   on('dReload', async () => { dirReady = true; await loadDir(); render(); });
   on('dlGeo', () => save(CONFIG.geoName.replace(/(\.\w+)$/, `_${nowStr().slice(0, 10)}$1`), JSON.stringify(toFC(), null, 1), 'application/geo+json'));
   on('dlCsv', () => save(CONFIG.csvName.replace(/(\.\w+)$/, `_${nowStr().slice(0, 10)}$1`), toCSV(), 'text/csv'));
+  if ($('presetSel')) $('presetSel').onchange = e => { if (e.target.value !== '') loadPreset(+e.target.value); };
   on('mOpen', () => $('inMeas').click()); on('addDem', () => $('inDem').click()); on('addVec', () => $('inVec').click());
   on('clearAll', () => {
     if (!confirm('計測をすべて消します。' + (dir && dirReady ? '作業フォルダの計測ファイルも空になります。' : '') + 'よろしいですか?')) return;
@@ -839,6 +863,12 @@ function render() {
 (async () => {
   render();
   for (const d of CONFIG.dems) try { await addDem(d.url, d.name, 'config'); } catch (e) { console.warn('DEM', d.url, e); }
+  for (const v of CONFIG.layers || []) try {
+    const r = await fetch(v.url); if (!r.ok) throw new Error(r.status);
+    const blob = await r.blob();
+    const P = CONFIG.presets.find(x => x.url === v.url);   // プルダウンにもあるレイヤは、プルダウンの名前で表示
+    (await addVectorFile(new File([blob], v.url.split('/').pop()), 'config', P ? P.name : v.name)).forEach(V => V.preset = v.url);
+  } catch (e) { console.warn('レイヤ', v.url, e); setStatus(`レイヤ ${v.url} を読み込めませんでした`); }
   try { const c = JSON.parse(store.get('rf2-cache') || 'null'); if (c) merge(c); } catch {}
   if (FS) try {
     dir = (await idb('readonly')) || null;
