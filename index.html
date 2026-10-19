@@ -46,6 +46,11 @@
   .attr td { padding: 2px 0; max-width: 200px; word-break: break-all; }
   .attr { max-height: 180px; overflow-y: auto; margin-bottom: 4px; }
   .area-pop .big { font-size: 15px; font-weight: 700; }
+  .legend { background: #fff; padding: 6px 9px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 12px; line-height: 1.6; max-height: 50vh; overflow-y: auto; }
+  .legend i, .cat i { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; border: 1px solid #555; }
+  .cat { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; cursor: pointer; }
+  .cat.off { opacity: .35; text-decoration: line-through; }
+  .cat .n { color: #777; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .lbl { background: none; border: 0; box-shadow: none; font-size: 11px; font-weight: 700; color: #222; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; text-align: center; white-space: nowrap; }
   @media (max-width: 760px) {
     #main { flex-direction: column; }
@@ -81,6 +86,11 @@ const CONFIG = {
   maxCells: 8e6,                        // 1回の計算で読むDEMセル数の上限(1mなら約800ha)
   labelZoom: 15,                        // このズーム以上でレイヤのラベルを表示
   layerColors: ['#ff9800', '#e040fb', '#76ff03', '#ff5252', '#40c4ff', '#ffd740'],
+  // 色分け:最初から色分けに使う列名(上から順に探す)と、値ごとの決まった色
+  colorFields: ['type', 'Type', 'TYPE', '種別', '区分', '用途', '作目', '地目', '草種'],
+  categoryColors: { '採草地': '#43a047', '放牧地': '#fdd835', 'デントコーン': '#fb8c00', '貸地・未利用地・造成地': '#9e9e9e',
+                    '牧草地': '#43a047', '田': '#1e88e5', '畑': '#8d6e63' },
+  palette: ['#00e5ff', '#e040fb', '#f44336', '#3f51b5', '#cddc39', '#ff80ab', '#795548', '#ffffff', '#009688', '#ffab40', '#b388ff', '#64dd17'],
   sqlWasm: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.wasm',
 };
 // ======================================================================
@@ -348,9 +358,9 @@ async function addVectorFile(file, from) {
 }
 function addVector(name, fc, from, crs) {
   const color = CONFIG.layerColors[colorNo++ % CONFIG.layerColors.length];
-  const V = { name, from, fc, color, crs, labelField: '', labels: L.layerGroup() };
+  const V = { name, from, fc, color, crs, labelField: '', labels: L.layerGroup(), colorField: '', cats: [], hidden: new Set() };
   V.gl = L.geoJSON(fc, {
-    style: { color, weight: 2, fillColor: color, fillOpacity: 0.12 },
+    style: f => styleFor(V, f),
     pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 5, color, weight: 2 }),
     onEachFeature: (f, l) => { l.vlayer = V; l.bindPopup(() => featurePopup(V, f), { minWidth: 230, maxWidth: 320 }); },
   }).addTo(map);
@@ -359,17 +369,69 @@ function addVector(name, fc, from, crs) {
   // 名前らしい列があれば、最初からラベルにする
   const keys = Object.keys(fc.features[0]?.properties || {});
   V.labelField = keys.find(k => /^(name|名前|圃場名|筆名|label)$/i.test(k)) || '';
-  drawLabels(V);
+  V.colorField = CONFIG.colorFields.find(k => keys.includes(k)) || '';
+  drawLabels(V); applyColors(V);
   return V;
 }
+
+// ---------- 列の値で色分け ----------
+const catOf = (V, f) => { const v = f.properties?.[V.colorField]; return v === null || v === undefined || v === '' ? '(空欄)' : String(v); };
+function styleFor(V, f) {
+  if (!V.colorField) return { color: V.color, weight: 2, fillColor: V.color, fillOpacity: 0.12 };
+  const k = catOf(V, f), c = V.catColor?.[k] || '#999';
+  if (V.hidden.has(k)) return { opacity: 0, fillOpacity: 0 };
+  return { color: c, weight: 2, fillColor: c, fillOpacity: 0.4 };
+}
+function applyColors(V) {
+  V.catColor = {}; V.cats = [];
+  if (V.colorField) {
+    const cnt = {};
+    V.fc.features.forEach(f => { const k = catOf(V, f); cnt[k] = (cnt[k] || 0) + 1; });
+    V.cats = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a] || a.localeCompare(b, 'ja'));
+    let i = 0;
+    const used = new Set(V.cats.map(k => CONFIG.categoryColors[k]).filter(Boolean));
+    const free = CONFIG.palette.filter(c => !used.has(c));
+    V.cats.forEach(k => V.catColor[k] = CONFIG.categoryColors[k] || (k === '(空欄)' ? '#bdbdbd' : free[i++ % free.length]));
+    V.catCount = cnt;
+  }
+  V.hidden = new Set([...V.hidden].filter(k => V.cats.includes(k)));
+  V.gl.eachLayer(l => {
+    l.setStyle(styleFor(V, l.feature));
+    const on = !V.hidden.has(catOf(V, l.feature)) || !V.colorField;
+    if (l.options) l.options.interactive = on;
+    if (l._path) l._path.style.pointerEvents = on ? '' : 'none';
+  });
+  drawLegend();
+}
+// 種類ごとの合計(面積を計算済みなら面積も)
+function catTotals(V) {
+  const t = {};
+  V.fc.features.forEach(f => {
+    const k = catOf(V, f), a = f._area; t[k] ||= { n: 0, surf: 0, proj: 0 };
+    t[k].n++; if (a && Number.isFinite(a.surf)) { t[k].surf += a.surf; t[k].proj += a.proj; }
+  });
+  return t;
+}
+const legendCtl = L.control({ position: 'bottomright' });
+legendCtl.onAdd = () => { const d = L.DomUtil.create('div', 'legend'); L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d); return d; };
+function drawLegend() {
+  const vs = vlayers.filter(V => V.colorField && map.hasLayer(V.gl));
+  if (!vs.length) { legendCtl.remove(); return; }
+  if (!legendCtl._map) legendCtl.addTo(map);
+  legendCtl.getContainer().innerHTML = vs.map(V => `<b>${esc(V.name)}:${esc(V.colorField)}</b><br>` +
+    V.cats.map(k => `<span style="${V.hidden.has(k) ? 'opacity:.35' : ''}"><i style="background:${V.catColor[k]}"></i>${esc(k)}</span>`).join('<br>')).join('<br>');
+}
+map.on('overlayadd overlayremove', drawLegend);
 function removeVector(V) {
   map.removeLayer(V.gl); map.removeLayer(V.labels); layerCtl.removeLayer(V.gl);
   vlayers.splice(vlayers.indexOf(V), 1);
+  drawLegend();
 }
 function drawLabels(V) {
   V.labels.clearLayers();
   if (V.labelField) V.gl.eachLayer(l => {
     const v = l.feature.properties[V.labelField]; if (v === null || v === undefined || v === '') return;
+    if (V.colorField && V.hidden.has(catOf(V, l.feature))) return;
     const at = l.getBounds ? l.getBounds().getCenter() : l.getLatLng();
     V.labels.addLayer(L.marker(at, { icon: L.divIcon({ className: 'lbl', html: esc(v), iconSize: [120, 14] }), interactive: false }));
   });
@@ -389,7 +451,8 @@ function featurePopup(V, f) {
   const p = f.properties || {};
   const rows = Object.keys(p).filter(k => !/^(投影面積_m2|表面積_m2|面積比|平均傾斜_度|DEM被覆率)$/.test(k) && p[k] !== null && p[k] !== '').slice(0, 30)
     .map(k => `<tr><th>${esc(k)}</th><td>${esc(p[k])}</td></tr>`).join('');
-  return `<b style="color:${V.color}">■</b> <b>${esc(V.name)}</b>
+  const sw = V.colorField ? V.catColor[catOf(V, f)] : V.color;
+  return `<b style="color:${sw}">■</b> <b>${esc(V.name)}</b>${V.colorField ? ` ・ ${esc(catOf(V, f))}` : ''}
     <div class="attr"><table>${rows || '<tr><td class="muted">属性なし</td></tr>'}</table></div>
     ${f._area ? areaHtml(f._area) : ''}
     ${isPoly(f) ? `<div class="small" style="margin-top:4px">${f._area ? '' : '<a class="act" data-act="farea">面積を計算</a> ・ '}<a class="act" data-act="fadd">計測に追加</a></div>` : ''}`;
@@ -702,10 +765,14 @@ function render() {
   const vecList = vlayers.map((V, i) => {
     const np = V.fc.features.filter(isPoly).length;
     const keys = [...new Set(V.fc.features.slice(0, 50).flatMap(f => Object.keys(f.properties || {})))].filter(k => !k.startsWith('_'));
-    return `<div class="item"><span class="sw" style="border-color:${V.color};background:${V.color}22"></span>
+    return `<div class="item"><span class="sw" style="border-color:${V.colorField ? '#555' : V.color};background:${V.colorField ? `linear-gradient(135deg, ${V.cats.slice(0, 4).map(k => V.catColor[k]).join(',')}${V.cats.length < 2 ? ',' + V.catColor[V.cats[0]] : ''})` : V.color + '22'}"></span>
       <div class="body"><b>${esc(V.name)}</b> <span class="muted small">${FROM[V.from]}</span>
       <div class="small muted">${nf(V.fc.features.length)} 地物(ポリゴン ${nf(np)})${V.crs ? ' ・ ' + esc(V.crs) : ''}</div>
-      <div class="small">ラベル <select data-vec="${i}">${['', ...keys].map(k => `<option ${k === V.labelField ? 'selected' : ''} value="${esc(k)}">${k ? esc(k) : '(なし)'}</option>`).join('')}</select></div>
+      <div class="small">色分け <select data-vec="${i}" data-sel="color">${['', ...keys].map(k => `<option ${k === V.colorField ? 'selected' : ''} value="${esc(k)}">${k ? esc(k) : '(しない)'}</option>`).join('')}</select></div>
+      ${V.colorField ? (() => { const t = catTotals(V); return `<div style="margin:3px 0 2px">${V.cats.map(k => `<div class="cat ${V.hidden.has(k) ? 'off' : ''}" data-vec="${i}" data-cat="${esc(k)}" title="クリックで表示/非表示">
+          <span><i style="background:${V.catColor[k]}"></i>${esc(k)}</span>
+          <span class="n">${t[k].n} 区画${V.done ? ` ・ ${nf(t[k].surf / 1e4, 2)} ha` : ''}</span></div>`).join('')}</div>`; })() : ''}
+      <div class="small">ラベル <select data-vec="${i}" data-sel="label">${['', ...keys].map(k => `<option ${k === V.labelField ? 'selected' : ''} value="${esc(k)}">${k ? esc(k) : '(なし)'}</option>`).join('')}</select></div>
       <div class="small"><a class="act" data-vec="${i}" data-a="fit">表示</a>${np ? ` ・ <a class="act" data-vec="${i}" data-a="bulk">全区画の面積を計算</a>` : ''}
         ${V.done ? ` ・ 書き出し <a class="act" data-vec="${i}" data-a="csv">CSV</a> <a class="act" data-vec="${i}" data-a="geo">GeoJSON</a>` : ''}</div></div>
       ${V.from === 'folder' ? '' : `<span class="x" data-vec="${i}" data-a="rm" title="外す">×</span>`}</div>`;
@@ -749,7 +816,16 @@ function render() {
     if (k === 'csv' || k === 'geo') exportLayer(V, k);
     if (k === 'rm') { removeVector(V); render(); }
   });
-  panel.querySelectorAll('select[data-vec]').forEach(s => s.onchange = () => { const V = vlayers[+s.dataset.vec]; V.labelField = s.value; drawLabels(V); });
+  panel.querySelectorAll('select[data-vec]').forEach(s => s.onchange = () => {
+    const V = vlayers[+s.dataset.vec];
+    if (s.dataset.sel === 'color') { V.colorField = s.value; V.hidden.clear(); applyColors(V); render(); }
+    else { V.labelField = s.value; drawLabels(V); }
+  });
+  panel.querySelectorAll('.cat[data-vec]').forEach(d => d.onclick = () => {
+    const V = vlayers[+d.dataset.vec], k = d.dataset.cat;
+    V.hidden.has(k) ? V.hidden.delete(k) : V.hidden.add(k);
+    applyColors(V); drawLabels(V); render();
+  });
   panel.querySelectorAll('.mcard [data-act]').forEach(a => a.onclick = () => {
     const l = byMid.get(a.closest('.mcard').dataset.mid); if (!l) return;
     const act = a.dataset.act;
